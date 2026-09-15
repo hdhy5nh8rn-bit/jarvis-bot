@@ -154,15 +154,38 @@ async function sendMessage() {
         message: message
       })
     });
-
     const data = await response.json();
 
-    document.getElementById("loading").remove();
+document.getElementById("loading").remove();
 
-    const answer =
-      data.response ||
-      data.error ||
-      "Не удалось получить ответ.";
+let answer;
+
+if (!response.ok) {
+  answer =
+    "Ошибка сервера (" +
+    response.status +
+    "): " +
+    (data.error || JSON.stringify(data));
+} else if (data.success === false) {
+  answer =
+    "Ошибка J.A.R.V.I.S.: " +
+    (data.error || JSON.stringify(data));
+} else {
+  answer =
+    data.response ||
+    "Сервер не вернул текст ответа: " +
+    JSON.stringify(data);
+}
+
+chat.innerHTML +=
+  '<div class="jarvis">' +
+  '<strong>J.A.R.V.I.S.:</strong><br>' +
+  escapeHtml(answer) +
+  '</div>';
+
+chat.scrollTop = chat.scrollHeight;
+
+    
 
     chat.innerHTML +=
       '<div class="jarvis">' +
@@ -172,16 +195,23 @@ async function sendMessage() {
 
     chat.scrollTop = chat.scrollHeight;
 
-  } catch (error) {
+} catch (error) {
 
-    document.getElementById("loading").remove();
+  const loading = document.getElementById("loading");
 
-    chat.innerHTML +=
-      '<div class="jarvis">' +
-      '<strong>J.A.R.V.I.S.:</strong><br>' +
-      'Произошла ошибка соединения.' +
-      '</div>';
+  if (loading) {
+    loading.remove();
   }
+
+  chat.innerHTML +=
+    '<div class="jarvis">' +
+    '<strong>J.A.R.V.I.S.:</strong><br>' +
+    'Ошибка соединения: ' +
+    escapeHtml(error.message) +
+    '</div>';
+
+  chat.scrollTop = chat.scrollHeight;
+}
 }
 
 function escapeHtml(text) {
