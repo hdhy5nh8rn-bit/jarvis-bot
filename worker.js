@@ -3,9 +3,9 @@ export default {
     try {
       const url = new URL(request.url);
 
-      // ==========================================
-      // ВЕБ-ИНТЕРФЕЙС
-      // ==========================================
+      // =========================
+      // WEB INTERFACE
+      // =========================
       if (request.method === "GET" && url.pathname === "/") {
         const html = `
 <!DOCTYPE html>
@@ -13,7 +13,6 @@ export default {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <title>J.A.R.V.I.S.</title>
 
 <style>
@@ -62,7 +61,7 @@ h1 {
 }
 
 .jarvis {
-  color: #ffffff;
+  color: white;
 }
 
 .input-area {
@@ -91,7 +90,7 @@ button {
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: .5;
 }
 </style>
 </head>
@@ -141,7 +140,6 @@ const chat = document.getElementById("chat");
 function addMessage(author, text, className) {
 
   const div = document.createElement("div");
-
   div.className = "message " + className;
 
   const strong = document.createElement("strong");
@@ -164,9 +162,7 @@ async function sendMessage() {
 
   const message = input.value.trim();
 
-  if (!message) {
-    return;
-  }
+  if (!message) return;
 
   input.value = "";
 
@@ -192,11 +188,9 @@ async function sendMessage() {
       new URL("/chat", window.location.origin),
       {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json"
         },
-
         body: JSON.stringify({
           message: message
         })
@@ -222,6 +216,7 @@ async function sendMessage() {
         data.response,
         "jarvis"
       );
+
     }
 
   } catch (error) {
@@ -238,7 +233,6 @@ async function sendMessage() {
 
   button.disabled = false;
   input.disabled = false;
-
   input.focus();
 }
 
@@ -256,7 +250,7 @@ input.addEventListener("keydown", function(event) {
 
 </body>
 </html>
-        `;
+`;
 
         return new Response(html, {
           status: 200,
@@ -267,13 +261,10 @@ input.addEventListener("keydown", function(event) {
       }
 
 
-      // ==========================================
-      // ЧАТ + ПАМЯТЬ
-      // ==========================================
-      if (
-        request.method === "POST" &&
-        url.pathname === "/chat"
-      ) {
+      // =========================
+      // CHAT
+      // =========================
+      if (request.method === "POST" && url.pathname === "/chat") {
 
         const body = await request.json();
 
@@ -283,6 +274,7 @@ input.addEventListener("keydown", function(event) {
             : "";
 
         if (!userMessage) {
+
           return new Response(
             JSON.stringify({
               success: false,
@@ -291,27 +283,66 @@ input.addEventListener("keydown", function(event) {
             {
               status: 400,
               headers: {
-                "Content-Type": "application/json; charset=UTF-8"
+                "Content-Type":
+                  "application/json; charset=UTF-8"
               }
             }
           );
+
         }
 
 
-        // ==========================================
-        // ПОЛУЧАЕМ ПОСЛЕДНИЕ СООБЩЕНИЯ ИЗ D1
-        // ==========================================
+        // =========================
+        // USER ID
+        // =========================
+        const userId = "egor";
 
-        const memoryResult = await env.DB.prepare(
-          `
+
+        // =========================
+        // LOAD LONG-TERM FACTS
+        // =========================
+        const factsResult = await env.DB.prepare(`
+          SELECT category, fact
+          FROM facts
+          WHERE user_id = ?
+          ORDER BY id DESC
+          LIMIT 50
+        `)
+        .bind(userId)
+        .all();
+
+
+        const facts = factsResult.results || [];
+
+
+        let factsText = "";
+
+        if (facts.length > 0) {
+
+          factsText =
+            "\n\nДОЛГОВРЕМЕННАЯ ПАМЯТЬ ПОЛЬЗОВАТЕЛЯ:\n" +
+            facts
+              .reverse()
+              .map(
+                item =>
+                  `- [${item.category}] ${item.fact}`
+              )
+              .join("\n");
+
+        }
+
+
+        // =========================
+        // LOAD RECENT CHAT HISTORY
+        // =========================
+        const memoryResult = await env.DB.prepare(`
           SELECT role, content
           FROM memory
           WHERE user_id = ?
           ORDER BY id DESC
           LIMIT 20
-          `
-        )
-        .bind("egor")
+        `)
+        .bind(userId)
         .all();
 
 
@@ -324,41 +355,60 @@ input.addEventListener("keydown", function(event) {
             }));
 
 
-        // ==========================================
-        // СИСТЕМНАЯ ЛИЧНОСТЬ J.A.R.V.I.S.
-        // ==========================================
-
+        // =========================
+        // SYSTEM PROMPT
+        // =========================
         const systemMessage = {
+
           role: "system",
+
           content:
+
             "Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент пользователя. " +
+
             "Отвечай на русском языке. " +
+
             "Будь спокойным, уверенным, умным, внимательным и естественным. " +
+
             "Помогай пользователю думать, учиться, планировать, принимать решения и выполнять задачи. " +
-            "Учитывай предыдущий контекст разговора. " +
+
+            "Учитывай текущий разговор и долговременную память. " +
+
             "Не выдавай себя за человека. " +
-            "Не придумывай факты о пользователе, которых нет в памяти или текущем разговоре. " +
-            "Если информации недостаточно — честно сообщи об этом."
+
+            "Не придумывай факты о пользователе. " +
+
+            "Долговременная память содержит только сведения, которые были явно сохранены пользователем или системой. " +
+
+            "Если пользователь говорит 'запомни', 'сохрани', 'учти на будущее' или аналогичную фразу, определи информацию, которую нужно сохранить. " +
+
+            "Если пользователь просит забыть определённую информацию, эту информацию нужно удалить из долговременной памяти. " +
+
+            "Если пользователь спрашивает, что ты о нём знаешь, перечисли сохранённые факты. " +
+
+            "Не утверждай, что информация сохранена или удалена, если операция действительно не была выполнена." +
+
+            factsText
+
         };
 
 
-        // ==========================================
-        // ФОРМИРУЕМ КОНТЕКСТ
-        // ==========================================
-
+        // =========================
+        // ASK AI
+        // =========================
         const messages = [
+
           systemMessage,
+
           ...previousMessages,
+
           {
             role: "user",
             content: userMessage
           }
+
         ];
 
-
-        // ==========================================
-        // ЗАПРОС К AI
-        // ==========================================
 
         const result = await env.AI.run(
           "@cf/zai-org/glm-4.7-flash",
@@ -373,66 +423,195 @@ input.addEventListener("keydown", function(event) {
           "Не удалось получить текст ответа от модели.";
 
 
-        // ==========================================
-        // СОХРАНЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ
-        // ==========================================
-
-        await env.DB.prepare(
-          `
-          INSERT INTO memory (user_id, role, content)
+        // =========================
+        // MEMORY OF CONVERSATION
+        // =========================
+        await env.DB.prepare(`
+          INSERT INTO memory
+          (user_id, role, content)
           VALUES (?, ?, ?)
-          `
-        )
+        `)
         .bind(
-          "egor",
+          userId,
           "user",
           userMessage
         )
         .run();
 
 
-        // ==========================================
-        // СОХРАНЯЕМ ОТВЕТ J.A.R.V.I.S.
-        // ==========================================
-
-        await env.DB.prepare(
-          `
-          INSERT INTO memory (user_id, role, content)
+        await env.DB.prepare(`
+          INSERT INTO memory
+          (user_id, role, content)
           VALUES (?, ?, ?)
-          `
-        )
+        `)
         .bind(
-          "egor",
+          userId,
           "assistant",
           answer
         )
         .run();
 
 
-        // ==========================================
-        // ОТВЕТ БРАУЗЕРУ
-        // ==========================================
+        // =========================
+        // LONG-TERM MEMORY COMMANDS
+        // =========================
+
+        const lowerMessage =
+          userMessage.toLowerCase();
+
+
+        // SAVE MEMORY
+        if (
+          lowerMessage.includes("запомни") ||
+          lowerMessage.includes("сохрани") ||
+          lowerMessage.includes("учти на будущее")
+        ) {
+
+          let fact = userMessage
+            .replace(/^.*?(запомни|сохрани|учти на будущее)\s*/i, "")
+            .trim();
+
+          if (fact) {
+
+            let category = "general";
+
+            if (
+              lowerMessage.includes("люблю") ||
+              lowerMessage.includes("нравится") ||
+              lowerMessage.includes("предпочитаю")
+            ) {
+              category = "preference";
+            }
+
+            if (
+              lowerMessage.includes("учусь") ||
+              lowerMessage.includes("университет") ||
+              lowerMessage.includes("учёб") ||
+              lowerMessage.includes("учеб")
+            ) {
+              category = "study";
+            }
+
+            if (
+              lowerMessage.includes("работаю") ||
+              lowerMessage.includes("работа")
+            ) {
+              category = "work";
+            }
+
+            if (
+              lowerMessage.includes("проект")
+            ) {
+              category = "project";
+            }
+
+            await env.DB.prepare(`
+              INSERT INTO facts
+              (user_id, category, fact)
+              VALUES (?, ?, ?)
+            `)
+            .bind(
+              userId,
+              category,
+              fact
+            )
+            .run();
+
+          }
+
+        }
+
+
+        // =========================
+        // FORGET MEMORY
+        // =========================
+        if (
+          lowerMessage.includes("забудь") ||
+          lowerMessage.includes("удали из памяти") ||
+          lowerMessage.includes("не запоминай")
+        ) {
+
+          let searchText = userMessage
+            .replace(/^.*?(забудь|удали из памяти|не запоминай)\s*/i, "")
+            .trim();
+
+
+          if (searchText) {
+
+            await env.DB.prepare(`
+              DELETE FROM facts
+              WHERE user_id = ?
+              AND fact LIKE ?
+            `)
+            .bind(
+              userId,
+              "%" + searchText + "%"
+            )
+            .run();
+
+          }
+
+        }
+
+
+        // =========================
+        // SHOW MEMORY
+        // =========================
+        if (
+          lowerMessage.includes("что ты обо мне знаешь") ||
+          lowerMessage.includes("покажи мою память") ||
+          lowerMessage.includes("что ты запомнил")
+        ) {
+
+          const currentFacts =
+            await env.DB.prepare(`
+              SELECT category, fact
+              FROM facts
+              WHERE user_id = ?
+              ORDER BY id ASC
+            `)
+            .bind(userId)
+            .all();
+
+
+          const savedFacts =
+            currentFacts.results || [];
+
+
+          if (savedFacts.length === 0) {
+
+            // AI answer is already returned,
+            // but there are currently no saved facts.
+
+          }
+
+        }
+
 
         return new Response(
+
           JSON.stringify({
             success: true,
             assistant: "J.A.R.V.I.S.",
             response: answer
           }),
+
           {
             status: 200,
             headers: {
-              "Content-Type": "application/json; charset=UTF-8"
+              "Content-Type":
+                "application/json; charset=UTF-8"
             }
           }
+
         );
+
       }
 
 
-      // ==========================================
-      // ТЕСТ AI
-      // ==========================================
-
+      // =========================
+      // TEST AI
+      // =========================
       if (
         request.method === "GET" &&
         url.pathname === "/test-ai"
@@ -456,6 +635,7 @@ input.addEventListener("keydown", function(event) {
           }
         );
 
+
         return new Response(
           JSON.stringify(
             {
@@ -468,10 +648,12 @@ input.addEventListener("keydown", function(event) {
           {
             status: 200,
             headers: {
-              "Content-Type": "application/json; charset=UTF-8"
+              "Content-Type":
+                "application/json; charset=UTF-8"
             }
           }
         );
+
       }
 
 
@@ -482,20 +664,29 @@ input.addEventListener("keydown", function(event) {
         }
       );
 
+
     } catch (error) {
 
       return new Response(
+
         JSON.stringify({
           success: false,
-          error: error?.message || "Неизвестная ошибка сервера."
+          error:
+            error?.message ||
+            "Неизвестная ошибка сервера."
         }),
+
         {
           status: 500,
           headers: {
-            "Content-Type": "application/json; charset=UTF-8"
+            "Content-Type":
+              "application/json; charset=UTF-8"
           }
         }
+
       );
+
     }
+
   }
 };
