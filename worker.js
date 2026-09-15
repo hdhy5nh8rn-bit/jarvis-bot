@@ -1,2977 +1,1281 @@
-const VERSION = "v5.4";
+const VERSION = "v5.5";
 const TIME_ZONE = "Europe/Moscow";
 const AI_MODEL = "@cf/zai-org/glm-4.7-flash";
-
 const SYSTEM_PROMPT = `
-Ты — J.A.R.V.I.S., персональный интеллектуальный ассистент пользователя.
-
-Твоя задача — помогать пользователю:
-- думать;
-- планировать;
+Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент пользователя.
+Отвечай на русском языке, естественно, спокойно и уверенно.
+Ты помогаешь пользователю:
+- планировать дела;
+- управлять задачами и напоминаниями;
 - учиться;
 - работать;
-- организовывать задачи;
+- организовывать расписание;
 - анализировать информацию;
-- создавать тексты;
-- вести обычный дружеский разговор.
-
-Общайся на русском языке.
-Стиль: спокойный, уверенный, умный, естественный.
-Отвечай как современный персональный AI-ассистент.
-Не говори "как искусственный интеллект", если это не требуется.
-Не упоминай внутреннюю архитектуру, Cloudflare, API, D1 и программный код без необходимости.
-Если пользователь просто здоровается — отвечай естественно и кратко.
+- писать и редактировать тексты;
+- принимать решения на основе фактов;
+- помнить важную информацию.
+Стиль:
+- кратко, когда вопрос простой;
+- подробно, когда требуется объяснение;
+- не повторяй вопрос пользователя;
+- не используй фразы вроде "как ИИ";
+- обращайся естественно;
+- если пользователь просто здоровается — поздоровайся.
+Если пользователь просит создать задачу, напоминание или событие,
+эта операция обрабатывается Worker отдельно.
 `;
-
-
-/* ============================================================
-   WORKER
-============================================================ */
-
-export default {
-
-  async fetch(request, env) {
-
-    try {
-
-      const url = new URL(request.url);
-
-
-      /* ======================================================
-         ГЛАВНАЯ
-      ====================================================== */
-
-      if (
-        url.pathname === "/" &&
-        request.method === "GET"
-      ) {
-
-        return new Response(
-          HTML_PAGE,
-          {
-            headers: {
-              "content-type":
-                "text/html; charset=UTF-8"
-            }
-          }
-        );
-
-      }
-
-
-      /* ======================================================
-         PING
-      ====================================================== */
-
-      if (
-        url.pathname === "/ping"
-      ) {
-
-        return json({
-          ok: true,
-          version: VERSION,
-          timezone: TIME_ZONE,
-          model: AI_MODEL,
-          message: "J.A.R.V.I.S. online"
-        });
-
-      }
-
-
-      /* ======================================================
-         HEALTH
-      ====================================================== */
-
-      if (
-        url.pathname === "/health"
-      ) {
-
-        return json({
-          ok: true,
-          version: VERSION,
-          database: !!env.DB,
-          ai: !!env.AI,
-          timezone: TIME_ZONE
-        });
-
-      }
-
-
-      /* ======================================================
-         СПИСОК ЗАДАЧ
-      ====================================================== */
-
-      if (
-        url.pathname === "/tasks" &&
-        request.method === "GET"
-      ) {
-
-        const userId =
-          url.searchParams.get("user_id") ||
-          "default";
-
-
-        const result =
-          await env.DB.prepare(`
-            SELECT
-              id,
-              title,
-              task_date,
-              task_time,
-              status,
-              task_type,
-              repeat_rule,
-              created_at
-            FROM tasks
-            WHERE user_id = ?
-            ORDER BY
-              CASE
-                WHEN task_date IS NULL THEN 1
-                ELSE 0
-              END,
-              task_date ASC,
-              task_time ASC,
-              id DESC
-          `)
-          .bind(userId)
-          .all();
-
-
-        return json({
-          ok: true,
-          tasks:
-            result.results || []
-        });
-
-      }
-
-
-      /* ======================================================
-         CHAT
-      ====================================================== */
-
-      if (
-        url.pathname === "/chat" &&
-        request.method === "POST"
-      ) {
-
-        const body =
-          await request.json();
-
-
-        const userId =
-          body.user_id ||
-          "default";
-
-
-        const message =
-          String(
-            body.message || ""
-          ).trim();
-
-
-        if (!message) {
-
-          return json({
-            ok: false,
-            error:
-              "Пустое сообщение."
-          }, 400);
-
-        }
-
-
-        /* ====================================================
-           СОХРАНЯЕМ СООБЩЕНИЕ
-        ==================================================== */
-
-        await env.DB.prepare(`
-          INSERT INTO memory (
-            user_id,
-            role,
-            content
-          )
-          VALUES (?, ?, ?)
-        `)
-        .bind(
-          userId,
-          "user",
-          message
-        )
-        .run();
-
-
-        const lower =
-          message.toLowerCase();
-
-
-        /* ====================================================
-           УДАЛЕНИЕ ЗАДАЧИ
-        ==================================================== */
-
-        if (
-          lower.startsWith("удали задачу") ||
-          lower.startsWith("удали напоминание") ||
-          lower.startsWith("удали событие")
-        ) {
-
-          const title =
-            message
-              .replace(
-                /^удали\s+(задачу|напоминание|событие)\s*/i,
-                ""
-              )
-              .trim();
-
-
-          if (title) {
-
-            const result =
-              await env.DB.prepare(`
-                DELETE FROM tasks
-                WHERE user_id = ?
-                AND title LIKE ?
-                AND status = 'active'
-              `)
-              .bind(
-                userId,
-                `%${title}%`
-              )
-              .run();
-
-
-            const deleted =
-              result.meta?.changes || 0;
-
-
-            const reply =
-              deleted
-                ? `Задачу «${title}» удалил.`
-                : `Активную задачу «${title}» не нашёл.`;
-
-
-            await saveAssistantMessage(
-              env,
-              userId,
-              reply
-            );
-
-
-            return json({
-              ok: true,
-              reply,
-              action: "delete_task"
-            });
-
-          }
-
-        }
-
-
-        /* ====================================================
-           ЗАВЕРШЕНИЕ ЗАДАЧИ
-        ==================================================== */
-
-        if (
-          lower.startsWith("выполни ") ||
-          lower.startsWith("заверши ") ||
-          lower.startsWith("отметь выполненной ")
-        ) {
-
-          const title =
-            message
-              .replace(
-                /^(выполни|заверши|отметь выполненной)\s+/i,
-                ""
-              )
-              .trim();
-
-
-          if (title) {
-
-            const result =
-              await env.DB.prepare(`
-                UPDATE tasks
-                SET status = 'completed'
-                WHERE user_id = ?
-                AND title LIKE ?
-                AND status = 'active'
-              `)
-              .bind(
-                userId,
-                `%${title}%`
-              )
-              .run();
-
-
-            const changed =
-              result.meta?.changes || 0;
-
-
-            const reply =
-              changed
-                ? `Готово. Задачу «${title}» отметил выполненной.`
-                : `Активную задачу «${title}» не нашёл.`;
-
-
-            await saveAssistantMessage(
-              env,
-              userId,
-              reply
-            );
-
-
-            return json({
-              ok: true,
-              reply,
-              action: "complete_task"
-            });
-
-          }
-
-        }
-
-
-        /* ====================================================
-           СПИСОК ЗАДАЧ
-        ==================================================== */
-
-        if (
-          lower === "задачи" ||
-          lower === "мои задачи" ||
-          lower === "список задач" ||
-          lower.includes("какие у меня задачи")
-        ) {
-
-          const result =
-            await env.DB.prepare(`
-              SELECT
-                id,
-                title,
-                task_date,
-                task_time,
-                status,
-                task_type,
-                repeat_rule
-              FROM tasks
-              WHERE user_id = ?
-              AND status = 'active'
-              ORDER BY
-                CASE
-                  WHEN task_date IS NULL THEN 1
-                  ELSE 0
-                END,
-                task_date ASC,
-                task_time ASC,
-                id ASC
-            `)
-            .bind(userId)
-            .all();
-
-
-          const tasks =
-            result.results || [];
-
-
-          let reply;
-
-
-          if (!tasks.length) {
-
-            reply =
-              "Активных задач сейчас нет.";
-
-          } else {
-
-            reply =
-              "Вот твои активные задачи:\n\n" +
-              tasks
-                .map(
-                  (task, index) => {
-
-                    let line =
-                      `${index + 1}. ${task.title}`;
-
-
-                    if (task.task_date) {
-                      line +=
-                        ` — ${task.task_date}`;
-                    }
-
-
-                    if (task.task_time) {
-                      line +=
-                        ` в ${task.task_time}`;
-                    }
-
-
-                    if (task.repeat_rule) {
-                      line +=
-                        ` · ${formatRepeatRule(task.repeat_rule)}`;
-                    }
-
-
-                    return line;
-
-                  }
-                )
-                .join("\n");
-
-          }
-
-
-          await saveAssistantMessage(
-            env,
-            userId,
-            reply
-          );
-
-
-          return json({
-            ok: true,
-            reply,
-            action: "list_tasks",
-            tasks
-          });
-
-        }
-
-
-        /* ====================================================
-           СОЗДАНИЕ ЗАДАЧИ
-        ==================================================== */
-
-        const parsedTask =
-          parseTaskMessage(message);
-
-
-        if (parsedTask) {
-
-          const existing =
-            await env.DB.prepare(`
-              SELECT id
-              FROM tasks
-              WHERE user_id = ?
-              AND title = ?
-              AND status = 'active'
-              AND (
-                task_date = ?
-                OR (
-                  task_date IS NULL
-                  AND ? IS NULL
-                )
-              )
-              LIMIT 1
-            `)
-            .bind(
-              userId,
-              parsedTask.title,
-              parsedTask.task_date,
-              parsedTask.task_date
-            )
-            .first();
-
-
-          if (!existing) {
-
-            const insert =
-              await env.DB.prepare(`
-                INSERT INTO tasks (
-                  user_id,
-                  title,
-                  task_date,
-                  task_time,
-                  status,
-                  task_type,
-                  repeat_rule
-                )
-                VALUES (?, ?, ?, ?, 'active', ?, ?)
-              `)
-              .bind(
-                userId,
-                parsedTask.title,
-                parsedTask.task_date,
-                parsedTask.task_time,
-                parsedTask.task_type,
-                parsedTask.repeat_rule
-              )
-              .run();
-
-
-            const id =
-              insert.meta?.last_row_id ||
-              null;
-
-
-            let reply =
-              `Готово. Добавил ${getTaskTypeWord(parsedTask.task_type)} «${parsedTask.title}»`;
-
-
-            if (parsedTask.task_date) {
-
-              reply +=
-                ` на ${formatRussianDate(parsedTask.task_date)}`;
-
-            }
-
-
-            if (parsedTask.task_time) {
-
-              reply +=
-                ` в ${parsedTask.task_time}`;
-
-            }
-
-
-            if (parsedTask.repeat_rule) {
-
-              reply +=
-                ` · ${formatRepeatRule(parsedTask.repeat_rule)}`;
-
-            }
-
-
-            reply += ".";
-
-
-            await saveAssistantMessage(
-              env,
-              userId,
-              reply
-            );
-
-
-            return json({
-              ok: true,
-              reply,
-              action: "create_task",
-              task_id: id,
-              task: parsedTask
-            });
-
-          }
-
-        }
-
-
-        /* ====================================================
-           ПОЛУЧАЕМ ИСТОРИЮ
-        ==================================================== */
-
-        const historyResult =
-          await env.DB.prepare(`
-            SELECT
-              role,
-              content
-            FROM memory
-            WHERE user_id = ?
-            ORDER BY id DESC
-            LIMIT 30
-          `)
-          .bind(userId)
-          .all();
-
-
-        const history =
-          (historyResult.results || [])
-            .reverse();
-
-
-        /* ====================================================
-           ПОЛУЧАЕМ ФАКТЫ
-        ==================================================== */
-
-        const factsResult =
-          await env.DB.prepare(`
-            SELECT
-              category,
-              fact
-            FROM facts
-            WHERE user_id = ?
-            ORDER BY updated_at DESC
-            LIMIT 30
-          `)
-          .bind(userId)
-          .all();
-
-
-        const facts =
-          factsResult.results || [];
-
-
-        /* ====================================================
-           СОЗДАЁМ MESSAGES
-        ==================================================== */
-
-        const messages = [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT
-          }
-        ];
-
-
-        if (facts.length) {
-
-          messages.push({
-            role: "system",
-            content:
-              "Известные факты о пользователе:\n" +
-              facts
-                .map(
-                  item =>
-                    `- ${item.category}: ${item.fact}`
-                )
-                .join("\n")
-          });
-
-        }
-
-
-        for (
-          const item of history
-        ) {
-
-          if (
-            item.role === "user" ||
-            item.role === "assistant"
-          ) {
-
-            messages.push({
-              role: item.role,
-              content: item.content
-            });
-
-          }
-
-        }
-
-
-        /* ====================================================
-           ПРОВЕРЯЕМ AI
-        ==================================================== */
-
-        if (!env.AI) {
-
-          return json({
-            ok: false,
-            error:
-              "Workers AI binding AI не найден."
-          }, 500);
-
-        }
-
-
-        /* ====================================================
-           ВЫЗОВ AI
-        ==================================================== */
-
-        let aiResult;
-
-
-        try {
-
-          aiResult =
-            await env.AI.run(
-              AI_MODEL,
-              {
-                messages
-              }
-            );
-
-        } catch (error) {
-
-          console.log(
-            "JARVIS AI ERROR:",
-            error?.stack ||
-            error?.message ||
-            String(error)
-          );
-
-
-          return json({
-            ok: false,
-            error:
-              "Ошибка при обращении к Workers AI.",
-            details:
-              error?.message ||
-              String(error)
-          }, 500);
-
-        }
-
-
-        /* ====================================================
-           ПОЛУЧАЕМ ТЕКСТ
-        ==================================================== */
-
-        let reply =
-          extractAIText(aiResult);
-
-
-        /* ====================================================
-           ЕСЛИ НЕ НАШЛИ
-        ==================================================== */
-
-        if (!reply) {
-
-          console.log(
-            "JARVIS AI RAW RESPONSE:",
-            JSON.stringify(aiResult)
-          );
-
-
-          return json({
-            ok: false,
-            error:
-              "Workers AI вернул данные, но текст ответа не найден.",
-            ai_response:
-              aiResult
-          }, 500);
-
-        }
-
-
-        reply =
-          String(reply).trim();
-
-
-        /* ====================================================
-           СОХРАНЯЕМ AI ОТВЕТ
-        ==================================================== */
-
-        await saveAssistantMessage(
-          env,
-          userId,
-          reply
-        );
-
-
-        return json({
-          ok: true,
-          reply,
-          action: "chat"
-        });
-
-      }
-
-
-      /* ======================================================
-         404
-      ====================================================== */
-
-      return json({
-        ok: false,
-        error: "Not found",
-        version: VERSION
-      }, 404);
-
-
-    } catch (error) {
-
-      console.log(
-        "JARVIS WORKER ERROR:",
-        error?.stack ||
-        error?.message ||
-        String(error)
-      );
-
-
-      return json({
-        ok: false,
-        error:
-          error?.message ||
-          "Внутренняя ошибка сервера.",
-        version: VERSION
-      }, 500);
-
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=UTF-8",
+      "access-control-allow-origin": "*"
     }
-
-  }
-
-};
-
-
-/* ============================================================
-   ИЗВЛЕЧЕНИЕ ТЕКСТА ИЗ AI
-============================================================ */
-
-function extractAIText(value, depth = 0) {
-
-  if (
-    value === null ||
-    value === undefined
-  ) {
-    return null;
-  }
-
-
-  if (depth > 10) {
-    return null;
-  }
-
-
-  /* ----------------------------------------------------------
-     Строка
-  ---------------------------------------------------------- */
-
-  if (
-    typeof value === "string"
-  ) {
-
-    const text =
-      value.trim();
-
-    return text || null;
-
-  }
-
-
-  /* ----------------------------------------------------------
-     Массив
-  ---------------------------------------------------------- */
-
-  if (
-    Array.isArray(value)
-  ) {
-
-    for (
-      const item of value
-    ) {
-
-      const result =
-        extractAIText(
-          item,
-          depth + 1
-        );
-
-
-      if (result) {
-        return result;
-      }
-
-    }
-
-
-    return null;
-
-  }
-
-
-  /* ----------------------------------------------------------
-     Объект
-  ---------------------------------------------------------- */
-
-  if (
-    typeof value === "object"
-  ) {
-
-    /*
-      Проверяем наиболее вероятные поля
-      в правильном порядке.
-    */
-
-    const priorityKeys = [
-
-      "response",
-
-      "text",
-
-      "output_text",
-
-      "generated_text",
-
-      "content",
-
-      "message",
-
-      "output",
-
-      "result",
-
-      "choices"
-
-    ];
-
-
-    for (
-      const key of priorityKeys
-    ) {
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          value,
-          key
-        )
-      ) {
-
-        const result =
-          extractAIText(
-            value[key],
-            depth + 1
-          );
-
-
-        if (result) {
-          return result;
-        }
-
-      }
-
-    }
-
-
-    /*
-      Если структура неизвестная —
-      рекурсивно ищем строку.
-    */
-
-    for (
-      const key of Object.keys(value)
-    ) {
-
-      const result =
-        extractAIText(
-          value[key],
-          depth + 1
-        );
-
-
-      if (result) {
-        return result;
-      }
-
-    }
-
-  }
-
-
-  return null;
-
+  });
 }
-
-
-/* ============================================================
-   СОХРАНЕНИЕ ОТВЕТА
-============================================================ */
-
-async function saveAssistantMessage(
-  env,
-  userId,
-  reply
-) {
-
-  await env.DB.prepare(`
-    INSERT INTO memory (
-      user_id,
-      role,
-      content
-    )
-    VALUES (?, ?, ?)
-  `)
-  .bind(
-    userId,
-    "assistant",
-    reply
-  )
-  .run();
-
-}
-
-
-/* ============================================================
-   JSON
-============================================================ */
-
-function json(
-  data,
-  status = 200
-) {
-
-  return new Response(
-    JSON.stringify(
-      data,
-      null,
-      2
-    ),
-    {
-      status,
-      headers: {
-        "content-type":
-          "application/json; charset=UTF-8"
-      }
+function html(body) {
+  return new Response(body, {
+    headers: {
+      "content-type": "text/html; charset=UTF-8"
     }
+  });
+}
+function nowMoscow() {
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(new Date());
+}
+function getMoscowDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+  const map = {};
+  for (const p of parts) map[p.type] = p.value;
+  return `${map.year}-${map.month}-${map.day}`;
+}
+function addDays(dateString, days) {
+  const [y, m, d] = dateString.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function weekdayName(dateString) {
+  const [y, m, d] = dateString.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return new Intl.DateTimeFormat("ru-RU", {
+    weekday: "long",
+    timeZone: "UTC"
+  }).format(date);
+}
+function parseTime(text) {
+  const lower = text.toLowerCase();
+  if (/полдень/.test(lower)) {
+    return "12:00";
+  }
+  if (/полночь/.test(lower)) {
+    return "00:00";
+  }
+  let match = lower.match(
+    /(?:в|на|к|около)?\s*(\d{1,2})(?::(\d{2}))?\s*(час(?:а|ов)?|ч)?\s*(утра|дня|вечера|ночи)?/
   );
-
+  if (!match) {
+    return null;
+  }
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || "00");
+  const part = match[4];
+  if (hour > 23 || minute > 59) {
+    return null;
+  }
+  if (part === "вечера" && hour < 12) {
+    hour += 12;
+  }
+  if (part === "дня" && hour < 12) {
+    hour += 12;
+  }
+  if (part === "ночи" && hour === 12) {
+    hour = 0;
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
-
-
-/* ============================================================
-   ПАРСЕР ЗАДАЧ
-============================================================ */
-
-function parseTaskMessage(message) {
-
-  const text =
-    message
-      .replace(/\s+/g, " ")
-      .trim();
-
-
-  const lower =
-    text.toLowerCase();
-
-
-  /* ----------------------------------------------------------
-     ТИП
-  ---------------------------------------------------------- */
-
-  let task_type =
-    "task";
-
-
-  if (
-    lower.includes("напоминание") ||
-    lower.startsWith("напомни")
-  ) {
-
-    task_type =
-      "reminder";
-
-  }
-
-
-  if (
-    lower.includes("событие") ||
-    lower.includes("мероприятие")
-  ) {
-
-    task_type =
-      "event";
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ВРЕМЯ
-  ---------------------------------------------------------- */
-
-  let task_time =
-    null;
-
-
-  let timeMatch =
-    lower.match(
-      /(?:в|на)\s+(\d{1,2})(?::(\d{2}))?\s*(час(?:а|ов)?|ч)?\s*(утра|дня|вечера|ночи)?/i
-    );
-
-
-  if (timeMatch) {
-
-    let hour =
-      Number(timeMatch[1]);
-
-
-    const minute =
-      timeMatch[2]
-        ? Number(timeMatch[2])
-        : 0;
-
-
-    const period =
-      (
-        timeMatch[4] || ""
-      ).toLowerCase();
-
-
-    if (
-      period === "вечера" &&
-      hour < 12
-    ) {
-
-      hour += 12;
-
-    }
-
-
-    if (
-      period === "дня" &&
-      hour < 12
-    ) {
-
-      hour += 12;
-
-    }
-
-
-    if (
-      period === "ночи" &&
-      hour === 12
-    ) {
-
-      hour = 0;
-
-    }
-
-
-    if (
-      period === "утра" &&
-      hour === 12
-    ) {
-
-      hour = 0;
-
-    }
-
-
-    if (
-      hour >= 0 &&
-      hour <= 23 &&
-      minute >= 0 &&
-      minute <= 59
-    ) {
-
-      task_time =
-        `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-
-    }
-
-  }
-
-
-  /* ----------------------------------------------------------
-     HH:MM
-  ---------------------------------------------------------- */
-
-  if (!task_time) {
-
-    const directTime =
-      lower.match(
-        /\b(\d{1,2}):(\d{2})\b/
-      );
-
-
-    if (directTime) {
-
-      const hour =
-        Number(directTime[1]);
-
-
-      const minute =
-        Number(directTime[2]);
-
-
-      if (
-        hour >= 0 &&
-        hour <= 23 &&
-        minute >= 0 &&
-        minute <= 59
-      ) {
-
-        task_time =
-          `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-
-      }
-
-    }
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ПРОСТО "В 10"
-  ---------------------------------------------------------- */
-
-  if (!task_time) {
-
-    const simpleTime =
-      lower.match(
-        /\bв\s+(\d{1,2})\b/
-      );
-
-
-    if (simpleTime) {
-
-      const hour =
-        Number(simpleTime[1]);
-
-
-      if (
-        hour >= 0 &&
-        hour <= 23
-      ) {
-
-        task_time =
-          `${String(hour).padStart(2, "0")}:00`;
-
-      }
-
-    }
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ПОЛДЕНЬ
-  ---------------------------------------------------------- */
-
-  if (
-    !task_time &&
-    lower.includes("полдень")
-  ) {
-
-    task_time =
-      "12:00";
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ПОЛНОЧЬ
-  ---------------------------------------------------------- */
-
-  if (
-    !task_time &&
-    lower.includes("полночь")
-  ) {
-
-    task_time =
-      "00:00";
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ДАТА
-  ---------------------------------------------------------- */
-
-  let task_date =
-    null;
-
-
-  if (
-    lower.includes("послезавтра")
-  ) {
-
-    task_date =
-      addDays(
-        getLocalDate(),
-        2
-      );
-
-  }
-
-  else if (
-    lower.includes("завтра")
-  ) {
-
-    task_date =
-      addDays(
-        getLocalDate(),
-        1
-      );
-
-  }
-
-  else if (
-    lower.includes("сегодня")
-  ) {
-
-    task_date =
-      getLocalDate();
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ДНИ НЕДЕЛИ
-  ---------------------------------------------------------- */
-
-  const weekdays = {
-
-    "понедельник": 1,
-    "понедельнику": 1,
-
-    "вторник": 2,
-    "вторнику": 2,
-
-    "среда": 3,
-    "среду": 3,
-
-    "четверг": 4,
-    "четвергу": 4,
-
-    "пятница": 5,
-    "пятницу": 5,
-
-    "суббота": 6,
-    "субботу": 6,
-
-    "воскресенье": 0
-
-  };
-
-
-  let weekdayFound =
-    null;
-
-
-  for (
-    const [
-      name,
-      dayNumber
-    ]
-    of Object.entries(weekdays)
-  ) {
-
-    if (
-      lower.includes(name)
-    ) {
-
-      weekdayFound =
-        dayNumber;
-
-      break;
-
-    }
-
-  }
-
-
-  if (
-    weekdayFound !== null &&
-    !task_date
-  ) {
-
-    task_date =
-      nextWeekday(
-        getLocalDate(),
-        weekdayFound
-      );
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ПОВТОР
-  ---------------------------------------------------------- */
-
-  let repeat_rule =
-    null;
-
-
+function parseRepeat(text) {
+  const lower = text.toLowerCase();
   if (
     lower.includes("каждый день") ||
     lower.includes("ежедневно")
   ) {
-
-    repeat_rule =
-      "daily";
-
+    return "daily";
   }
-
-  else if (
+  if (
     lower.includes("по будням") ||
     lower.includes("каждый будний день")
   ) {
-
-    repeat_rule =
-      "weekdays";
-
+    return "weekdays";
   }
-
-  else if (
+  if (
     lower.includes("каждую неделю") ||
     lower.includes("еженедельно")
   ) {
-
-    repeat_rule =
-      "weekly";
-
+    return "weekly";
   }
-
-  else if (
+  if (
     lower.includes("каждый месяц") ||
     lower.includes("ежемесячно")
   ) {
-
-    repeat_rule =
-      "monthly";
-
+    return "monthly";
   }
-
-  else if (
-    weekdayFound !== null &&
-    lower.includes("каждый")
-  ) {
-
-    repeat_rule =
-      `weekly:${weekdayFound}`;
-
-  }
-
-
-  /* ----------------------------------------------------------
-     ИНДИКАТОРЫ ЗАДАЧ
-  ---------------------------------------------------------- */
-
-  const taskIndicators = [
-
-    "сделать",
-    "подготовить",
-    "купить",
-    "позвонить",
-    "написать",
-    "отправить",
-    "проверить",
-    "сдать",
-    "выучить",
-    "начать",
-    "закончить",
-    "посмотреть",
-    "встретиться",
-    "заняться",
-    "подготовка",
-    "напомни",
-    "напомнить",
-    "напоминание",
-    "запланируй",
-    "поставь задачу",
-    "добавь задачу"
-
-  ];
-
-
-  const hasIndicator =
-    taskIndicators.some(
-      indicator =>
-        lower.includes(indicator)
-    );
-
-
-  const hasDate =
-    lower.includes("сегодня") ||
-    lower.includes("завтра") ||
-    lower.includes("послезавтра") ||
-    weekdayFound !== null;
-
-
-  const hasTime =
-    !!task_time;
-
-
-  if (
-    !hasIndicator &&
-    !hasDate &&
-    !hasTime
-  ) {
-
-    return null;
-
-  }
-
-
-  /* ----------------------------------------------------------
-     НАЗВАНИЕ
-  ---------------------------------------------------------- */
-
-  let title =
-    text
-      .replace(
-        /^(запиши|добавь|создай|поставь|запланируй)\s+/i,
-        ""
-      );
-
-
-  title =
-    title
-      .replace(
-        /^задачу\s*/i,
-        ""
-      )
-      .replace(
-        /^напоминание\s*/i,
-        ""
-      )
-      .replace(
-        /^событие\s*/i,
-        ""
-      );
-
-
-  title =
-    title
-      .replace(
-        /\b(сегодня|завтра|послезавтра)\b/gi,
-        ""
-      );
-
-
-  title =
-    title
-      .replace(
-        /\b(в|на)\s+\d{1,2}(?::\d{2})?\s*(час(?:а|ов)?|ч)?\s*(утра|дня|вечера|ночи)?/gi,
-        ""
-      );
-
-
-  title =
-    title
-      .replace(
-        /\b\d{1,2}:\d{2}\b/g,
-        ""
-      );
-
-
-  title =
-    title
-      .replace(
-        /\b(каждый день|ежедневно|по будням|каждую неделю|еженедельно|каждый месяц|ежемесячно)\b/gi,
-        ""
-      );
-
-
-  title =
-    title
-      .replace(
-        /\s+/g,
-        " "
-      )
-      .trim();
-
-
-  if (!title) {
-
-    return null;
-
-  }
-
-
-  return {
-
-    title,
-
-    task_date,
-
-    task_time,
-
-    task_type,
-
-    repeat_rule
-
+  const weekdays = {
+    понедельник: 1,
+    вторник: 2,
+    среда: 3,
+    четверг: 4,
+    пятница: 5,
+    суббота: 6,
+    воскресенье: 0
   };
-
-}
-
-
-/* ============================================================
-   ДАТА
-============================================================ */
-
-function getLocalDate() {
-
-  const now =
-    new Date();
-
-
-  const parts =
-    new Intl.DateTimeFormat(
-      "en-CA",
-      {
-        timeZone: TIME_ZONE,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit"
-      }
-    )
-    .formatToParts(now);
-
-
-  const values = {};
-
-
-  for (
-    const part of parts
-  ) {
-
+  for (const [name, number] of Object.entries(weekdays)) {
     if (
-      part.type !== "literal"
+      lower.includes(`каждый ${name}`) ||
+      lower.includes(`каждую ${name}`)
     ) {
-
-      values[part.type] =
-        part.value;
-
+      return `weekly:${number}`;
     }
-
   }
-
-
-  return (
-    `${values.year}-${values.month}-${values.day}`
-  );
-
+  return null;
 }
-
-
-/* ============================================================
-   ДОБАВИТЬ ДНИ
-============================================================ */
-
-function addDays(
-  dateString,
-  days
-) {
-
-  const date =
-    new Date(
-      `${dateString}T12:00:00`
-    );
-
-
-  date.setDate(
-    date.getDate() + days
-  );
-
-
-  return [
-
-    date.getFullYear(),
-
-    String(
-      date.getMonth() + 1
-    ).padStart(2, "0"),
-
-    String(
-      date.getDate()
-    ).padStart(2, "0")
-
-  ].join("-");
-
-}
-
-
-/* ============================================================
-   СЛЕДУЮЩИЙ ДЕНЬ НЕДЕЛИ
-============================================================ */
-
-function nextWeekday(
-  dateString,
-  targetDay
-) {
-
-  const date =
-    new Date(
-      `${dateString}T12:00:00`
-    );
-
-
-  const current =
-    date.getDay();
-
-
-  let diff =
-    targetDay - current;
-
-
-  if (diff <= 0) {
-    diff += 7;
+function parseTaskType(text) {
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("напоминание") ||
+    lower.includes("напомни")
+  ) {
+    return "reminder";
   }
-
-
-  date.setDate(
-    date.getDate() + diff
-  );
-
-
-  return [
-
-    date.getFullYear(),
-
-    String(
-      date.getMonth() + 1
-    ).padStart(2, "0"),
-
-    String(
-      date.getDate()
-    ).padStart(2, "0")
-
-  ].join("-");
-
+  if (
+    lower.includes("событие") ||
+    lower.includes("мероприятие")
+  ) {
+    return "event";
+  }
+  return "task";
 }
-
-
-/* ============================================================
-   ФОРМАТ ДАТЫ
-============================================================ */
-
-function formatRussianDate(
-  dateString
-) {
-
-  const date =
-    new Date(
-      `${dateString}T12:00:00`
+function cleanTaskTitle(text) {
+  let title = text.trim();
+  title = title
+    .replace(/^завтра\s*/i, "")
+    .replace(/^послезавтра\s*/i, "")
+    .replace(/^сегодня\s*/i, "")
+    .replace(/^на завтра\s*/i, "")
+    .replace(/^на сегодня\s*/i, "");
+  title = title.replace(
+    /^(в|на|к|около)\s+\d{1,2}(?::\d{2})?\s*(час(?:а|ов)?|ч)?\s*(утра|дня|вечера|ночи)?/i,
+    ""
+  );
+  title = title
+    .replace(/^(каждый день|ежедневно)\s*/i, "")
+    .replace(/^(по будням)\s*/i, "")
+    .replace(/^(каждую неделю|еженедельно)\s*/i, "")
+    .replace(/^(каждый месяц|ежемесячно)\s*/i, "");
+  title = title
+    .replace(/^создай\s+/i, "")
+    .replace(/^создать\s+/i, "")
+    .replace(/^добавь\s+/i, "")
+    .replace(/^добавить\s+/i, "")
+    .replace(/^поставь\s+/i, "")
+    .replace(/^поставить\s+/i, "")
+    .replace(/^напомни\s+/i, "")
+    .replace(/^напоминание\s+/i, "")
+    .replace(/^задачу\s*/i, "")
+    .replace(/^задача\s*/i, "")
+    .replace(/^событие\s*/i, "");
+  return title.trim();
+}
+function parseTask(text) {
+  const lower = text.toLowerCase();
+  const taskWords =
+    lower.includes("задач") ||
+    lower.includes("сделать") ||
+    lower.includes("подготовить") ||
+    lower.includes("напомни") ||
+    lower.includes("напоминание") ||
+    lower.includes("создай") ||
+    lower.includes("добавь") ||
+    lower.includes("событие") ||
+    lower.includes("встреч");
+  if (!taskWords) {
+    return null;
+  }
+  let taskDate = getMoscowDate();
+  if (lower.includes("послезавтра")) {
+    taskDate = addDays(taskDate, 2);
+  } else if (lower.includes("завтра")) {
+    taskDate = addDays(taskDate, 1);
+  }
+  const days = {
+    воскресенье: 0,
+    понедельник: 1,
+    вторник: 2,
+    среда: 3,
+    четверг: 4,
+    пятница: 5,
+    суббота: 6
+  };
+  for (const [name, targetDay] of Object.entries(days)) {
+    if (lower.includes(name)) {
+      const current = new Date(`${taskDate}T00:00:00Z`);
+      const currentDay = current.getUTCDay();
+      let diff = targetDay - currentDay;
+      if (diff < 0) diff += 7;
+      if (diff === 0 && lower.includes("следующ")) {
+        diff = 7;
+      }
+      taskDate = addDays(taskDate, diff);
+      break;
+    }
+  }
+  const taskTime = parseTime(text);
+  const repeatRule = parseRepeat(text);
+  const taskType = parseTaskType(text);
+  const title = cleanTaskTitle(text);
+  if (!title) {
+    return null;
+  }
+  return {
+    title,
+    task_date: taskDate,
+    task_time: taskTime,
+    task_type: taskType,
+    repeat_rule: repeatRule
+  };
+}
+async function getRecentMemory(env, userId) {
+  const result = await env.DB.prepare(`
+    SELECT role, content, created_at
+    FROM memory
+    WHERE user_id = ?
+    ORDER BY id DESC
+    LIMIT 20
+  `)
+    .bind(userId)
+    .all();
+  return (result.results || []).reverse();
+}
+async function getFacts(env, userId) {
+  const result = await env.DB.prepare(`
+    SELECT category, fact
+    FROM facts
+    WHERE user_id = ?
+    ORDER BY updated_at DESC
+    LIMIT 50
+  `)
+    .bind(userId)
+    .all();
+  return result.results || [];
+}
+async function saveMemory(env, userId, role, content) {
+  await env.DB.prepare(`
+    INSERT INTO memory (user_id, role, content)
+    VALUES (?, ?, ?)
+  `)
+    .bind(userId, role, content)
+    .run();
+}
+async function saveFact(env, userId, category, fact) {
+  await env.DB.prepare(`
+    INSERT INTO facts (user_id, category, fact)
+    VALUES (?, ?, ?)
+  `)
+    .bind(userId, category, fact)
+    .run();
+}
+async function getTasks(env, userId, status = "active") {
+  const result = await env.DB.prepare(`
+    SELECT
+      id,
+      title,
+      task_date,
+      task_time,
+      status,
+      task_type,
+      repeat_rule,
+      created_at
+    FROM tasks
+    WHERE user_id = ?
+      AND status = ?
+    ORDER BY
+      CASE WHEN task_date IS NULL THEN 1 ELSE 0 END,
+      task_date ASC,
+      task_time ASC,
+      id ASC
+  `)
+    .bind(userId, status)
+    .all();
+  return result.results || [];
+}
+function formatTasks(tasks) {
+  if (!tasks.length) {
+    return "Активных задач нет.";
+  }
+  return tasks
+    .map((task, index) => {
+      let line = `${index + 1}. ${task.title}`;
+      if (task.task_date) {
+        line += ` — ${task.task_date}`;
+      }
+      if (task.task_time) {
+        line += ` в ${task.task_time}`;
+      }
+      if (task.task_type && task.task_type !== "task") {
+        line += ` [${task.task_type}]`;
+      }
+      if (task.repeat_rule) {
+        line += ` 🔁 ${task.repeat_rule}`;
+      }
+      return line;
+    })
+    .join("\n");
+}
+async function createTask(env, userId, task) {
+  const result = await env.DB.prepare(`
+    INSERT INTO tasks (
+      user_id,
+      title,
+      task_date,
+      task_time,
+      status,
+      task_type,
+      repeat_rule
+    )
+    VALUES (?, ?, ?, ?, 'active', ?, ?)
+  `)
+    .bind(
+      userId,
+      task.title,
+      task.task_date,
+      task.task_time,
+      task.task_type,
+      task.repeat_rule
+    )
+    .run();
+  return result.meta?.last_row_id || null;
+}
+async function deleteTaskById(env, userId, id) {
+  const result = await env.DB.prepare(`
+    UPDATE tasks
+    SET status = 'deleted'
+    WHERE id = ?
+      AND user_id = ?
+      AND status = 'active'
+  `)
+    .bind(id, userId)
+    .run();
+  return result.meta?.changes > 0;
+}
+async function completeTaskById(env, userId, id) {
+  const result = await env.DB.prepare(`
+    UPDATE tasks
+    SET status = 'completed'
+    WHERE id = ?
+      AND user_id = ?
+      AND status = 'active'
+  `)
+    .bind(id, userId)
+    .run();
+  return result.meta?.changes > 0;
+}
+function extractAIText(result) {
+  if (!result) return null;
+  if (typeof result === "string") {
+    return result;
+  }
+  if (typeof result.response === "string") {
+    return result.response;
+  }
+  if (
+    result.choices &&
+    Array.isArray(result.choices) &&
+    result.choices.length > 0
+  ) {
+    const choice = result.choices[0];
+    if (typeof choice?.message?.content === "string") {
+      return choice.message.content;
+    }
+    if (typeof choice?.text === "string") {
+      return choice.text;
+    }
+  }
+  if (result.result) {
+    const nested = extractAIText(result.result);
+    if (nested) return nested;
+  }
+  if (typeof result.text === "string") {
+    return result.text;
+  }
+  if (typeof result.output_text === "string") {
+    return result.output_text;
+  }
+  if (typeof result.generated_text === "string") {
+    return result.generated_text;
+  }
+  if (typeof result.message?.content === "string") {
+    return result.message.content;
+  }
+  return null;
+}
+async function askAI(env, messages) {
+  const result = await env.AI.run(AI_MODEL, {
+    messages
+  });
+  const text = extractAIText(result);
+  if (!text) {
+    throw new Error(
+      "Workers AI вернул данные, но текст ответа не найден: " +
+      JSON.stringify(result)
     );
-
-
-  return new Intl.DateTimeFormat(
-    "ru-RU",
+  }
+  return text.trim();
+}
+function getUserId(request) {
+  const header = request.headers.get("X-User-ID");
+  return header || "egor";
+}
+async function handleChat(request, env) {
+  const body = await request.json();
+  const message =
+    typeof body.message === "string"
+      ? body.message.trim()
+      : "";
+  if (!message) {
+    return json({
+      ok: false,
+      error: "Пустое сообщение."
+    }, 400);
+  }
+  const userId = body.user_id || getUserId(request);
+  const lower = message.toLowerCase();
+  // -------------------------------
+  // СОЗДАНИЕ ЗАДАЧИ
+  // -------------------------------
+  const parsedTask = parseTask(message);
+  if (parsedTask) {
+    const taskId = await createTask(
+      env,
+      userId,
+      parsedTask
+    );
+    let reply =
+      `Готово. Задача «${parsedTask.title}» создана`;
+    if (parsedTask.task_date) {
+      reply += ` на ${parsedTask.task_date}`;
+    }
+    if (parsedTask.task_time) {
+      reply += ` в ${parsedTask.task_time}`;
+    }
+    reply += ".";
+    await saveMemory(env, userId, "user", message);
+    await saveMemory(env, userId, "assistant", reply);
+    return json({
+      ok: true,
+      type: "task_created",
+      task_id: taskId,
+      task: parsedTask,
+      reply
+    });
+  }
+  // -------------------------------
+  // СПИСОК ЗАДАЧ
+  // -------------------------------
+  if (
+    lower === "задачи" ||
+    lower === "мои задачи" ||
+    lower.includes("покажи задачи") ||
+    lower.includes("какие у меня задачи") ||
+    lower.includes("что у меня запланировано")
+  ) {
+    const tasks = await getTasks(env, userId);
+    const reply = formatTasks(tasks);
+    await saveMemory(env, userId, "user", message);
+    await saveMemory(env, userId, "assistant", reply);
+    return json({
+      ok: true,
+      type: "tasks",
+      tasks,
+      reply
+    });
+  }
+  // -------------------------------
+  // УДАЛЕНИЕ ЗАДАЧИ ПО ID
+  // -------------------------------
+  const deleteMatch = lower.match(
+    /(?:удали|удалить|отмени|отменить)\s+(?:задачу\s+)?#?(\d+)/
+  );
+  if (deleteMatch) {
+    const id = Number(deleteMatch[1]);
+    const success = await deleteTaskById(
+      env,
+      userId,
+      id
+    );
+    const reply = success
+      ? `Готово. Задача №${id} удалена.`
+      : `Задачу №${id} не удалось найти среди активных.`;
+    await saveMemory(env, userId, "user", message);
+    await saveMemory(env, userId, "assistant", reply);
+    return json({
+      ok: true,
+      type: "task_deleted",
+      success,
+      reply
+    });
+  }
+  // -------------------------------
+  // ЗАВЕРШЕНИЕ ЗАДАЧИ
+  // -------------------------------
+  const completeMatch = lower.match(
+    /(?:выполни|заверши|закрой|готово)\s+(?:задачу\s+)?#?(\d+)/
+  );
+  if (completeMatch) {
+    const id = Number(completeMatch[1]);
+    const success = await completeTaskById(
+      env,
+      userId,
+      id
+    );
+    const reply = success
+      ? `Готово. Задача №${id} отмечена выполненной.`
+      : `Задачу №${id} не удалось найти среди активных.`;
+    await saveMemory(env, userId, "user", message);
+    await saveMemory(env, userId, "assistant", reply);
+    return json({
+      ok: true,
+      type: "task_completed",
+      success,
+      reply
+    });
+  }
+  // -------------------------------
+  // ПАМЯТЬ
+  // -------------------------------
+  const rememberMatch = message.match(
+    /^(?:запомни|запомни что|помни что)\s+(.+)/i
+  );
+  if (rememberMatch) {
+    const fact = rememberMatch[1].trim();
+    await saveFact(
+      env,
+      userId,
+      "user",
+      fact
+    );
+    const reply = "Хорошо. Я это запомнил.";
+    await saveMemory(env, userId, "user", message);
+    await saveMemory(env, userId, "assistant", reply);
+    return json({
+      ok: true,
+      type: "memory_saved",
+      reply
+    });
+  }
+  // -------------------------------
+  // Обычный AI-ЧАТ
+  // -------------------------------
+  const memory = await getRecentMemory(
+    env,
+    userId
+  );
+  const facts = await getFacts(
+    env,
+    userId
+  );
+  const factText = facts.length
+    ? "\n\nИзвестные факты о пользователе:\n" +
+      facts
+        .map(f => `- ${f.category}: ${f.fact}`)
+        .join("\n")
+    : "";
+  const messages = [
     {
-      day: "numeric",
-      month: "long"
+      role: "system",
+      content:
+        SYSTEM_PROMPT +
+        `\n\nТекущее московское время: ${nowMoscow()}.` +
+        factText
     }
-  ).format(date);
-
-}
-
-
-/* ============================================================
-   ТИП ЗАДАЧИ
-============================================================ */
-
-function getTaskTypeWord(
-  type
-) {
-
-  if (
-    type === "reminder"
-  ) {
-
-    return "напоминание";
-
+  ];
+  for (const item of memory) {
+    if (
+      item.role === "user" ||
+      item.role === "assistant"
+    ) {
+      messages.push({
+        role: item.role,
+        content: item.content
+      });
+    }
   }
-
-
-  if (
-    type === "event"
-  ) {
-
-    return "событие";
-
-  }
-
-
-  return "задачу";
-
-}
-
-
-/* ============================================================
-   ПОВТОР
-============================================================ */
-
-function formatRepeatRule(
-  rule
-) {
-
-  if (
-    rule === "daily"
-  ) {
-
-    return "каждый день";
-
-  }
-
-
-  if (
-    rule === "weekdays"
-  ) {
-
-    return "по будням";
-
-  }
-
-
-  if (
-    rule === "weekly"
-  ) {
-
-    return "каждую неделю";
-
-  }
-
-
-  if (
-    rule === "monthly"
-  ) {
-
-    return "каждый месяц";
-
-  }
-
-
-  if (
-    rule?.startsWith("weekly:")
-  ) {
-
-    const day =
-      Number(
-        rule.split(":")[1]
-      );
-
-
-    const names = [
-
-      "воскресенье",
-
-      "понедельник",
-
-      "вторник",
-
-      "среду",
-
-      "четверг",
-
-      "пятницу",
-
-      "субботу"
-
-    ];
-
-
-    return (
-      `каждую неделю, ${names[day] || ""}`
+  messages.push({
+    role: "user",
+    content: message
+  });
+  try {
+    const reply = await askAI(
+      env,
+      messages
     );
-
+    await saveMemory(
+      env,
+      userId,
+      "user",
+      message
+    );
+    await saveMemory(
+      env,
+      userId,
+      "assistant",
+      reply
+    );
+    return json({
+      ok: true,
+      type: "chat",
+      reply
+    });
+  } catch (error) {
+    return json({
+      ok: false,
+      error: String(error),
+      reply:
+        "Я получил сообщение, но сейчас не смог получить ответ от интеллектуального модуля."
+    }, 500);
   }
-
-
-  return rule;
-
 }
-
-
-/* ============================================================
-   HTML
-============================================================ */
-
-const HTML_PAGE = `
-
+// ======================================================
+// WEB INTERFACE
+// ======================================================
+function renderApp() {
+  return html(`
 <!DOCTYPE html>
-
 <html lang="ru">
-
 <head>
-
 <meta charset="UTF-8">
-
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0, viewport-fit=cover"
->
-
+<meta name="viewport"
+      content="width=device-width,
+      initial-scale=1,
+      maximum-scale=1,
+      viewport-fit=cover">
 <title>J.A.R.V.I.S.</title>
-
-
 <style>
-
 * {
-
   box-sizing: border-box;
-
-  -webkit-tap-highlight-color: transparent;
-
 }
-
-
 html,
 body {
-
   margin: 0;
-
   padding: 0;
-
   width: 100%;
-
   height: 100%;
-
   background: #05070a;
-
-  color: #f2f4f7;
-
+  color: #f4f7fb;
   font-family:
     -apple-system,
     BlinkMacSystemFont,
     "SF Pro Display",
-    "Segoe UI",
+    Arial,
     sans-serif;
-
 }
-
-
 body {
-
   overflow: hidden;
-
 }
-
-
 .app {
-
-  width: 100%;
-
-  height: 100%;
-
+  height: 100dvh;
   display: flex;
-
   flex-direction: column;
-
   background:
     radial-gradient(
-      circle at top,
-      rgba(100,120,140,.15),
-      transparent 45%
+      circle at 50% 0%,
+      rgba(35, 80, 120, .18),
+      transparent 42%
     ),
     #05070a;
-
 }
-
-
-/* HEADER */
-
 .header {
-
-  height: 68px;
-
+  height: 64px;
   flex-shrink: 0;
-
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
   padding:
     env(safe-area-inset-top)
     18px
     0
     18px;
-
-  border-bottom:
-    1px solid rgba(255,255,255,.07);
-
-  background:
-    rgba(5,7,10,.92);
-
-  backdrop-filter:
-    blur(20px);
-
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  background: rgba(5,7,10,.86);
+  backdrop-filter: blur(18px);
 }
-
-
 .brand {
-
   display: flex;
-
-  flex-direction: column;
-
-}
-
-
-.brand-title {
-
-  font-size: 19px;
-
-  font-weight: 600;
-
-  letter-spacing: 2px;
-
-}
-
-
-.brand-subtitle {
-
-  margin-top: 3px;
-
-  font-size: 10px;
-
-  color: #7e8995;
-
-  letter-spacing: 1px;
-
-}
-
-
-.status {
-
-  display: flex;
-
   align-items: center;
-
-  gap: 7px;
-
-  font-size: 11px;
-
-  color: #89939d;
-
+  gap: 11px;
 }
-
-
-.status-dot {
-
-  width: 7px;
-
-  height: 7px;
-
-  border-radius: 50%;
-
-  background: #6ee7b7;
-
-  box-shadow:
-    0 0 10px rgba(110,231,183,.7);
-
-}
-
-
-/* CHAT */
-
-.chat {
-
-  flex: 1;
-
-  overflow-y: auto;
-
-  -webkit-overflow-scrolling: touch;
-
-  padding:
-    24px
-    16px
-    120px;
-
-  scroll-behavior: smooth;
-
-}
-
-
-.welcome {
-
-  min-height: 100%;
-
-  display: flex;
-
-  flex-direction: column;
-
-  align-items: center;
-
-  justify-content: center;
-
-  text-align: center;
-
-  padding: 30px;
-
-}
-
-
 .arc {
-
-  width: 74px;
-
-  height: 74px;
-
+  width: 34px;
+  height: 34px;
+  border: 2px solid #8ed8ff;
   border-radius: 50%;
-
-  border:
-    1px solid rgba(255,255,255,.25);
-
   box-shadow:
-    0 0 30px rgba(255,255,255,.08),
-    inset 0 0 25px rgba(255,255,255,.04);
-
-  display: flex;
-
-  align-items: center;
-
-  justify-content: center;
-
-  margin-bottom: 24px;
-
+    0 0 8px rgba(80,190,255,.65),
+    inset 0 0 8px rgba(80,190,255,.25);
+  position: relative;
 }
-
-
-.arc::before {
-
+.arc:after {
   content: "";
-
-  width: 32px;
-
-  height: 32px;
-
+  position: absolute;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-
-  border:
-    2px solid rgba(255,255,255,.7);
-
-  box-shadow:
-    0 0 18px rgba(255,255,255,.25);
-
+  background: #bcecff;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 14px #71cfff;
 }
-
-
-.welcome h1 {
-
-  margin: 0;
-
-  font-size: 27px;
-
-  font-weight: 500;
-
-  letter-spacing: 3px;
-
-}
-
-
-.welcome p {
-
-  margin-top: 10px;
-
-  color: #7d8791;
-
-  font-size: 14px;
-
-  line-height: 1.5;
-
-}
-
-
-/* MESSAGES */
-
-.message-row {
-
-  display: flex;
-
-  margin-bottom: 18px;
-
-}
-
-
-.message-row.user {
-
-  justify-content: flex-end;
-
-}
-
-
-.message-row.assistant {
-
-  justify-content: flex-start;
-
-}
-
-
-.message {
-
-  max-width: 82%;
-
-  padding:
-    12px
-    15px;
-
-  border-radius: 17px;
-
+.brand-title {
+  font-weight: 700;
+  letter-spacing: 2px;
   font-size: 15px;
-
-  line-height: 1.5;
-
-  white-space: pre-wrap;
-
-  word-wrap: break-word;
-
 }
-
-
-.message.user {
-
-  background: #20252b;
-
-  border-bottom-right-radius: 5px;
-
-  color: #f4f5f6;
-
+.status {
+  font-size: 11px;
+  color: #7dffad;
+  margin-top: 2px;
 }
-
-
-.message.assistant {
-
-  background:
-    rgba(255,255,255,.055);
-
-  border:
-    1px solid rgba(255,255,255,.06);
-
-  border-bottom-left-radius: 5px;
-
-  color: #e9edf0;
-
+.version {
+  font-size: 11px;
+  color: #68717d;
 }
-
-
-/* TYPING */
-
-.typing {
-
-  display: flex;
-
-  gap: 5px;
-
-  padding:
-    14px
-    17px;
-
-  width: 64px;
-
-  border-radius: 17px;
-
-  background:
-    rgba(255,255,255,.055);
-
-}
-
-
-.typing span {
-
-  width: 5px;
-
-  height: 5px;
-
-  border-radius: 50%;
-
-  background: #9ba4ad;
-
-  animation:
-    typing 1.2s infinite ease-in-out;
-
-}
-
-
-.typing span:nth-child(2) {
-
-  animation-delay: .15s;
-
-}
-
-
-.typing span:nth-child(3) {
-
-  animation-delay: .3s;
-
-}
-
-
-@keyframes typing {
-
-  0%,
-  60%,
-  100% {
-
-    transform: translateY(0);
-
-    opacity: .4;
-
-  }
-
-  30% {
-
-    transform: translateY(-4px);
-
-    opacity: 1;
-
-  }
-
-}
-
-
-/* INPUT */
-
-.input-area {
-
-  position: fixed;
-
-  left: 0;
-
-  right: 0;
-
-  bottom: 0;
-
-  padding:
-    10px
-    12px
-    calc(10px + env(safe-area-inset-bottom));
-
-  background:
-    linear-gradient(
-      to top,
-      #05070a 70%,
-      transparent
-    );
-
-}
-
-
-.input-box {
-
-  display: flex;
-
-  align-items: flex-end;
-
-  gap: 8px;
-
-  max-width: 900px;
-
-  margin: auto;
-
-  padding:
-    6px
-    6px
-    6px
-    14px;
-
-  border:
-    1px solid rgba(255,255,255,.09);
-
-  border-radius: 23px;
-
-  background:
-    rgba(24,28,33,.94);
-
-  backdrop-filter:
-    blur(20px);
-
-}
-
-
-textarea {
-
+.messages {
   flex: 1;
-
-  min-height: 40px;
-
-  max-height: 130px;
-
-  resize: none;
-
-  border: none;
-
-  outline: none;
-
-  background: transparent;
-
-  color: #f3f4f5;
-
-  font: inherit;
-
-  font-size: 15px;
-
-  line-height: 1.45;
-
-  padding:
-    9px
-    0;
-
+  overflow-y: auto;
+  padding: 22px 15px 110px;
+  -webkit-overflow-scrolling: touch;
 }
-
-
-textarea::placeholder {
-
-  color: #707a84;
-
-}
-
-
-.send {
-
-  width: 40px;
-
-  height: 40px;
-
-  flex-shrink: 0;
-
-  border: none;
-
-  border-radius: 50%;
-
-  background: #f0f1f2;
-
-  color: #080a0d;
-
-  font-size: 17px;
-
+.welcome {
+  min-height: 100%;
   display: flex;
-
+  flex-direction: column;
   align-items: center;
-
   justify-content: center;
-
+  text-align: center;
+  padding: 30px;
 }
-
-
-.send:active {
-
-  transform: scale(.94);
-
+.welcome-logo {
+  width: 86px;
+  height: 86px;
+  border: 2px solid #72cfff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 22px;
+  box-shadow:
+    0 0 30px rgba(70,180,255,.18),
+    inset 0 0 25px rgba(70,180,255,.08);
 }
-
-
-.send:disabled {
-
-  opacity: .4;
-
+.welcome-logo span {
+  font-size: 27px;
+  color: #9ce2ff;
 }
-
-
+.welcome h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+  letter-spacing: 3px;
+}
+.welcome p {
+  color: #87919d;
+  line-height: 1.5;
+  max-width: 320px;
+}
+.message {
+  display: flex;
+  margin: 8px 0;
+}
+.message.user {
+  justify-content: flex-end;
+}
+.message.assistant {
+  justify-content: flex-start;
+}
+.bubble {
+  max-width: 84%;
+  padding: 12px 15px;
+  border-radius: 18px;
+  line-height: 1.45;
+  font-size: 15px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.user .bubble {
+  background: #183246;
+  border-bottom-right-radius: 5px;
+}
+.assistant .bubble {
+  background: #15191e;
+  border: 1px solid rgba(255,255,255,.06);
+  border-bottom-left-radius: 5px;
+}
+.typing {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8fdcff;
+  animation: blink 1.2s infinite;
+}
+.dot:nth-child(2) {
+  animation-delay: .2s;
+}
+.dot:nth-child(3) {
+  animation-delay: .4s;
+}
+@keyframes blink {
+  0%, 100% {
+    opacity: .2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.input-area {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding:
+    9px 12px
+    calc(9px + env(safe-area-inset-bottom));
+  background: rgba(5,7,10,.92);
+  backdrop-filter: blur(18px);
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+textarea {
+  flex: 1;
+  resize: none;
+  min-height: 45px;
+  max-height: 130px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: #101419;
+  color: white;
+  outline: none;
+  font-family: inherit;
+  font-size: 16px;
+}
+textarea:focus {
+  border-color: rgba(100,200,255,.45);
+}
+button {
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  border: 0;
+  background: #b8e8ff;
+  color: #061018;
+  font-size: 20px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+button:disabled {
+  opacity: .35;
+}
 @media (min-width: 700px) {
-
-  .chat {
-
-    padding-left: 24px;
-
-    padding-right: 24px;
-
+  .messages {
+    max-width: 900px;
+    width: 100%;
+    margin: 0 auto;
   }
-
-
-  .message {
-
-    max-width: 680px;
-
-  }
-
-
-  .input-area {
-
-    padding-left: 24px;
-
-    padding-right: 24px;
-
-  }
-
 }
-
 </style>
-
 </head>
-
-
 <body>
-
-
 <div class="app">
-
-
-<header class="header">
-
-
-<div class="brand">
-
-<div class="brand-title">
-J.A.R.V.I.S.
+  <header class="header">
+    <div class="brand">
+      <div class="arc"></div>
+      <div>
+        <div class="brand-title">
+          J.A.R.V.I.S.
+        </div>
+        <div class="status">
+          ● ONLINE
+        </div>
+      </div>
+    </div>
+    <div class="version">
+      ${VERSION}
+    </div>
+  </header>
+  <main id="messages" class="messages">
+    <div id="welcome" class="welcome">
+      <div class="welcome-logo">
+        <span>J</span>
+      </div>
+      <h1>J.A.R.V.I.S.</h1>
+      <p>
+        Ваш персональный интеллектуальный ассистент.
+        Напишите сообщение, чтобы начать.
+      </p>
+    </div>
+  </main>
+  <div class="input-area">
+    <div class="input-row">
+      <textarea
+        id="input"
+        placeholder="Сообщение J.A.R.V.I.S..."
+        rows="1"></textarea>
+      <button id="send">
+        ↑
+      </button>
+    </div>
+  </div>
 </div>
-
-
-<div class="brand-subtitle">
-JUST A RATHER VERY INTELLIGENT SYSTEM
-</div>
-
-</div>
-
-
-<div class="status">
-
-<span class="status-dot"></span>
-
-<span>ONLINE</span>
-
-</div>
-
-
-</header>
-
-
-<main
-  id="chat"
-  class="chat"
->
-
-
-<div
-  id="welcome"
-  class="welcome"
->
-
-
-<div class="arc"></div>
-
-
-<h1>
-Добрый день.
-</h1>
-
-
-<p>
-J.A.R.V.I.S. готов к работе.
-</p>
-
-
-</div>
-
-
-</main>
-
-
-<div class="input-area">
-
-
-<div class="input-box">
-
-
-<textarea
-  id="input"
-  placeholder="Сообщение J.A.R.V.I.S..."
-  rows="1"
-></textarea>
-
-
-<button
-  id="send"
-  class="send"
-  aria-label="Отправить"
->
-↑
-</button>
-
-
-</div>
-
-
-</div>
-
-
-</div>
-
-
 <script>
-
-const chat =
-  document.getElementById("chat");
-
-
+const messagesEl =
+  document.getElementById("messages");
 const input =
   document.getElementById("input");
-
-
 const send =
   document.getElementById("send");
-
-
 const welcome =
   document.getElementById("welcome");
-
-
-const USER_ID =
-  localStorage.getItem(
-    "jarvis_user_id"
-  ) ||
-  "default";
-
-
-let messages =
+let history =
   JSON.parse(
-    localStorage.getItem(
-      "jarvis_chat"
-    ) ||
-    "[]"
+    localStorage.getItem("jarvis_chat") || "[]"
   );
-
-
-function saveMessages() {
-
+function saveHistory() {
   localStorage.setItem(
     "jarvis_chat",
     JSON.stringify(
-      messages.slice(-100)
+      history.slice(-100)
     )
   );
-
 }
-
-
-function scrollBottom() {
-
-  requestAnimationFrame(
-    () => {
-
-      chat.scrollTop =
-        chat.scrollHeight;
-
-    }
-  );
-
+function escapeHTML(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
-
-
-function addMessage(
-  role,
-  text,
-  save = true
-) {
-
+function addMessage(role, text, save = true) {
   if (welcome) {
-
-    welcome.remove();
-
+    welcome.style.display = "none";
   }
-
-
-  const row =
-    document.createElement(
-      "div"
-    );
-
-
-  row.className =
-    "message-row " +
-    role;
-
-
+  const wrapper =
+    document.createElement("div");
+  wrapper.className =
+    "message " + role;
   const bubble =
-    document.createElement(
-      "div"
-    );
-
-
-  bubble.className =
-    "message " +
-    role;
-
-
-  bubble.textContent =
-    text;
-
-
-  row.appendChild(
-    bubble
-  );
-
-
-  chat.appendChild(
-    row
-  );
-
-
+    document.createElement("div");
+  bubble.className = "bubble";
+  bubble.innerHTML =
+    escapeHTML(text);
+  wrapper.appendChild(bubble);
+  messagesEl.appendChild(wrapper);
+  messagesEl.scrollTop =
+    messagesEl.scrollHeight;
   if (save) {
-
-    messages.push({
+    history.push({
       role,
       text
     });
-
-
-    saveMessages();
-
+    saveHistory();
   }
-
-
-  scrollBottom();
-
 }
-
-
-function showTyping() {
-
-  const row =
-    document.createElement(
-      "div"
+function showHistory() {
+  if (!history.length) return;
+  if (welcome) {
+    welcome.style.display = "none";
+  }
+  for (const item of history) {
+    addMessage(
+      item.role,
+      item.text,
+      false
     );
-
-
-  row.id =
-    "typing-row";
-
-
-  row.className =
-    "message-row assistant";
-
-
-  row.innerHTML = \`
-    <div class="typing">
-      <span></span>
-      <span></span>
-      <span></span>
+  }
+  messagesEl.scrollTop =
+    messagesEl.scrollHeight;
+}
+function showTyping() {
+  const wrapper =
+    document.createElement("div");
+  wrapper.className =
+    "message assistant";
+  wrapper.id = "typing";
+  wrapper.innerHTML = \`
+    <div class="bubble typing">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
     </div>
   \`;
-
-
-  chat.appendChild(
-    row
-  );
-
-
-  scrollBottom();
-
+  messagesEl.appendChild(wrapper);
+  messagesEl.scrollTop =
+    messagesEl.scrollHeight;
 }
-
-
-function hideTyping() {
-
-  const element =
-    document.getElementById(
-      "typing-row"
-    );
-
-
-  if (element) {
-
-    element.remove();
-
+function removeTyping() {
+  const typing =
+    document.getElementById("typing");
+  if (typing) {
+    typing.remove();
   }
-
 }
-
-
 async function sendMessage() {
-
   const text =
     input.value.trim();
-
-
-  if (!text) {
-    return;
-  }
-
-
+  if (!text) return;
   input.value = "";
-
-  input.style.height =
-    "auto";
-
-
+  input.style.height = "auto";
   addMessage(
     "user",
     text
   );
-
-
-  send.disabled =
-    true;
-
-
+  send.disabled = true;
   showTyping();
-
-
   try {
-
     const response =
-      await fetch(
-        "/chat",
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-
-          body:
-            JSON.stringify({
-              user_id:
-                USER_ID,
-
-              message:
-                text
-            })
-        }
-      );
-
-
+      await fetch("/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+        body: JSON.stringify({
+          message: text,
+          user_id: "egor"
+        })
+      });
     const data =
       await response.json();
-
-
-    hideTyping();
-
-
-    console.log(
-      "JARVIS RESPONSE:",
-      data
-    );
-
-
-    if (
-      data &&
-      data.reply
-    ) {
-
+    removeTyping();
+    if (data.reply) {
       addMessage(
         "assistant",
         data.reply
       );
-
-    } else {
-
-      let errorText =
-        data?.error ||
-        "Не удалось получить ответ.";
-
-
-      if (
-        data?.details
-      ) {
-
-        errorText +=
-          "\n\nТехническая информация:\n" +
-          data.details;
-
-      }
-
-
+    } else if (data.error) {
       addMessage(
         "assistant",
-        errorText
+        "Ошибка: " + data.error
       );
-
+    } else {
+      addMessage(
+        "assistant",
+        "J.A.R.V.I.S. получил данные, но не вернул текстовый ответ."
+      );
     }
-
-
   } catch (error) {
-
-    hideTyping();
-
-
-    console.error(
-      "JARVIS FETCH ERROR:",
-      error
-    );
-
-
+    removeTyping();
     addMessage(
       "assistant",
-      "Не удалось связаться с J.A.R.V.I.S."
+      "Не удалось подключиться к J.A.R.V.I.S."
     );
-
+  } finally {
+    send.disabled = false;
+    input.focus();
   }
-
-
-  send.disabled =
-    false;
-
-
-  input.focus();
-
 }
-
-
 send.addEventListener(
   "click",
   sendMessage
 );
-
-
 input.addEventListener(
   "keydown",
   event => {
-
     if (
       event.key === "Enter" &&
       !event.shiftKey
     ) {
-
       event.preventDefault();
-
       sendMessage();
-
     }
-
   }
 );
-
-
 input.addEventListener(
   "input",
   () => {
-
     input.style.height =
       "auto";
-
-
     input.style.height =
       Math.min(
         input.scrollHeight,
         130
       ) + "px";
-
   }
 );
-
-
-/* ==========================================================
-   ИСТОРИЯ
-========================================================== */
-
-if (
-  messages.length
-) {
-
-  if (welcome) {
-
-    welcome.remove();
-
-  }
-
-
-  for (
-    const message
-    of messages
-  ) {
-
-    const row =
-      document.createElement(
-        "div"
-      );
-
-
-    row.className =
-      "message-row " +
-      message.role;
-
-
-    const bubble =
-      document.createElement(
-        "div"
-      );
-
-
-    bubble.className =
-      "message " +
-      message.role;
-
-
-    bubble.textContent =
-      message.text;
-
-
-    row.appendChild(
-      bubble
-    );
-
-
-    chat.appendChild(
-      row
-    );
-
-  }
-
-
-  scrollBottom();
-
-}
-
-
+showHistory();
 input.focus();
-
 </script>
-
-
 </body>
-
 </html>
-
-`;
+`);
+}
+// ======================================================
+// MAIN WORKER
+// ======================================================
+export default {
+  async fetch(request, env) {
+    const url =
+      new URL(request.url);
+    // -------------------------------
+    // HOME
+    // -------------------------------
+    if (
+      request.method === "GET" &&
+      url.pathname === "/"
+    ) {
+      return renderApp();
+    }
+    // -------------------------------
+    // PING
+    // -------------------------------
+    if (
+      request.method === "GET" &&
+      url.pathname === "/ping"
+    ) {
+      return json({
+        ok: true,
+        version: VERSION,
+        timezone: TIME_ZONE,
+        model: AI_MODEL,
+        message: "J.A.R.V.I.S. online"
+      });
+    }
+    // -------------------------------
+    // HEALTH
+    // -------------------------------
+    if (
+      request.method === "GET" &&
+      url.pathname === "/health"
+    ) {
+      return json({
+        ok: true,
+        version: VERSION,
+        database: !!env.DB,
+        ai: !!env.AI,
+        timezone: TIME_ZONE,
+        model: AI_MODEL
+      });
+    }
+    // -------------------------------
+    // AI DIAGNOSTIC
+    // -------------------------------
+    if (
+      request.method === "GET" &&
+      url.pathname === "/ai-test"
+    ) {
+      try {
+        const result =
+          await env.AI.run(
+            AI_MODEL,
+            {
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "Ты J.A.R.V.I.S. Ответь кратко."
+                },
+                {
+                  role: "user",
+                  content:
+                    "Ответь одним словом: Привет"
+                }
+              ]
+            }
+          );
+        return json({
+          ok: true,
+          model: AI_MODEL,
+          raw: result
+        });
+      } catch (error) {
+        return json({
+          ok: false,
+          model: AI_MODEL,
+          error: String(error),
+          stack: error?.stack || null
+        }, 500);
+      }
+    }
+    // -------------------------------
+    // TASKS API
+    // -------------------------------
+    if (
+      request.method === "GET" &&
+      url.pathname === "/tasks"
+    ) {
+      try {
+        const userId =
+          url.searchParams.get("user_id") ||
+          "egor";
+        const tasks =
+          await getTasks(
+            env,
+            userId
+          );
+        return json({
+          ok: true,
+          tasks
+        });
+      } catch (error) {
+        return json({
+          ok: false,
+          error: String(error)
+        }, 500);
+      }
+    }
+    // -------------------------------
+    // CHAT
+    // -------------------------------
+    if (
+      request.method === "POST" &&
+      url.pathname === "/chat"
+    ) {
+      try {
+        return await handleChat(
+          request,
+          env
+        );
+      } catch (error) {
+        return json({
+          ok: false,
+          error: String(error)
+        }, 500);
+      }
+    }
+    return json({
+      ok: false,
+      error: "Not found"
+    }, 404);
+  }
+};
