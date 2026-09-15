@@ -3,10 +3,10 @@ export default {
     try {
       const url = new URL(request.url);
 
-      // =========================
-      // ВЕБ-ИНТЕРФЕЙС J.A.R.V.I.S.
-      // =========================
-      if (request.method === "GET" && url.pathname === "/chat") {
+      // ==========================================
+      // ВЕБ-ИНТЕРФЕЙС
+      // ==========================================
+      if (request.method === "GET" && url.pathname === "/") {
         const html = `
 <!DOCTYPE html>
 <html lang="ru">
@@ -170,11 +170,7 @@ async function sendMessage() {
 
   input.value = "";
 
-  addMessage(
-    "Вы",
-    message,
-    "user"
-  );
+  addMessage("Вы", message, "user");
 
   button.disabled = true;
   input.disabled = true;
@@ -215,8 +211,7 @@ async function sendMessage() {
 
       addMessage(
         "J.A.R.V.I.S.",
-        "Ошибка: " +
-        (data.error || "Неизвестная ошибка"),
+        "Ошибка: " + (data.error || "Неизвестная ошибка"),
         "jarvis"
       );
 
@@ -247,21 +242,15 @@ async function sendMessage() {
   input.focus();
 }
 
-button.addEventListener(
-  "click",
-  sendMessage
-);
+button.addEventListener("click", sendMessage);
 
-input.addEventListener(
-  "keydown",
-  function(event) {
+input.addEventListener("keydown", function(event) {
 
-    if (event.key === "Enter") {
-      sendMessage();
-    }
-
+  if (event.key === "Enter") {
+    sendMessage();
   }
-);
+
+});
 
 </script>
 
@@ -270,15 +259,17 @@ input.addEventListener(
         `;
 
         return new Response(html, {
+          status: 200,
           headers: {
             "Content-Type": "text/html; charset=UTF-8"
           }
         });
       }
 
-      // =========================
-      // ЧАТ С ИИ
-      // =========================
+
+      // ==========================================
+      // ЧАТ + ПАМЯТЬ
+      // ==========================================
       if (
         request.method === "POST" &&
         url.pathname === "/chat"
@@ -306,31 +297,121 @@ input.addEventListener(
           );
         }
 
+
+        // ==========================================
+        // ПОЛУЧАЕМ ПОСЛЕДНИЕ СООБЩЕНИЯ ИЗ D1
+        // ==========================================
+
+        const memoryResult = await env.DB.prepare(
+          `
+          SELECT role, content
+          FROM memory
+          WHERE user_id = ?
+          ORDER BY id DESC
+          LIMIT 20
+          `
+        )
+        .bind("egor")
+        .all();
+
+
+        const previousMessages =
+          (memoryResult.results || [])
+            .reverse()
+            .map(row => ({
+              role: row.role,
+              content: row.content
+            }));
+
+
+        // ==========================================
+        // СИСТЕМНАЯ ЛИЧНОСТЬ J.A.R.V.I.S.
+        // ==========================================
+
+        const systemMessage = {
+          role: "system",
+          content:
+            "Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент пользователя. " +
+            "Отвечай на русском языке. " +
+            "Будь спокойным, уверенным, умным, внимательным и естественным. " +
+            "Помогай пользователю думать, учиться, планировать, принимать решения и выполнять задачи. " +
+            "Учитывай предыдущий контекст разговора. " +
+            "Не выдавай себя за человека. " +
+            "Не придумывай факты о пользователе, которых нет в памяти или текущем разговоре. " +
+            "Если информации недостаточно — честно сообщи об этом."
+        };
+
+
+        // ==========================================
+        // ФОРМИРУЕМ КОНТЕКСТ
+        // ==========================================
+
+        const messages = [
+          systemMessage,
+          ...previousMessages,
+          {
+            role: "user",
+            content: userMessage
+          }
+        ];
+
+
+        // ==========================================
+        // ЗАПРОС К AI
+        // ==========================================
+
         const result = await env.AI.run(
           "@cf/zai-org/glm-4.7-flash",
           {
-            messages: [
-              {
-                role: "system",
-                content:
-                  "Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент пользователя. " +
-                  "Отвечай на русском языке. " +
-                  "Будь спокойным, уверенным, умным, вежливым и естественным. " +
-                  "Помогай пользователю думать, учиться, планировать, принимать решения и выполнять задачи. " +
-                  "Обращайся к пользователю уважительно. " +
-                  "Не выдавай себя за человека."
-              },
-              {
-                role: "user",
-                content: userMessage
-              }
-            ]
+            messages: messages
           }
         );
+
 
         const answer =
           result?.choices?.[0]?.message?.content ||
           "Не удалось получить текст ответа от модели.";
+
+
+        // ==========================================
+        // СОХРАНЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ
+        // ==========================================
+
+        await env.DB.prepare(
+          `
+          INSERT INTO memory (user_id, role, content)
+          VALUES (?, ?, ?)
+          `
+        )
+        .bind(
+          "egor",
+          "user",
+          userMessage
+        )
+        .run();
+
+
+        // ==========================================
+        // СОХРАНЯЕМ ОТВЕТ J.A.R.V.I.S.
+        // ==========================================
+
+        await env.DB.prepare(
+          `
+          INSERT INTO memory (user_id, role, content)
+          VALUES (?, ?, ?)
+          `
+        )
+        .bind(
+          "egor",
+          "assistant",
+          answer
+        )
+        .run();
+
+
+        // ==========================================
+        // ОТВЕТ БРАУЗЕРУ
+        // ==========================================
 
         return new Response(
           JSON.stringify({
@@ -347,9 +428,11 @@ input.addEventListener(
         );
       }
 
-      // =========================
-      // ДИАГНОСТИКА AI
-      // =========================
+
+      // ==========================================
+      // ТЕСТ AI
+      // ==========================================
+
       if (
         request.method === "GET" &&
         url.pathname === "/test-ai"
@@ -391,13 +474,11 @@ input.addEventListener(
         );
       }
 
+
       return new Response(
         "Not Found",
         {
-          status: 404,
-          headers: {
-            "Content-Type": "text/plain; charset=UTF-8"
-          }
+          status: 404
         }
       );
 
