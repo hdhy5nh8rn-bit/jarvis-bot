@@ -3,10 +3,11 @@ export default {
     try {
       const url = new URL(request.url);
 
-    
-      // Веб-интерфейс
-      if (url.pathname === "/") {
-  const html = `
+      // =========================
+      // ВЕБ-ИНТЕРФЕЙС J.A.R.V.I.S.
+      // =========================
+      if (request.method === "GET" && url.pathname === "/") {
+        const html = `
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -16,7 +17,6 @@ export default {
 <title>J.A.R.V.I.S.</title>
 
 <style>
-
 body {
   margin: 0;
   background: #05070a;
@@ -93,7 +93,6 @@ button {
 button:disabled {
   opacity: 0.5;
 }
-
 </style>
 </head>
 
@@ -111,7 +110,7 @@ button:disabled {
 
 <div class="message jarvis">
 <strong>J.A.R.V.I.S.</strong><br>
-Разумеется. Система готова к работе.
+Добрый день. Система готова к работе.
 </div>
 
 </div>
@@ -165,7 +164,9 @@ async function sendMessage() {
 
   const message = input.value.trim();
 
-  if (!message) return;
+  if (!message) {
+    return;
+  }
 
   input.value = "";
 
@@ -181,7 +182,6 @@ async function sendMessage() {
   const loading = document.createElement("div");
 
   loading.className = "message jarvis";
-  loading.id = "loading";
 
   loading.innerHTML =
     "<strong>J.A.R.V.I.S.</strong><br>Обрабатываю запрос...";
@@ -192,19 +192,20 @@ async function sendMessage() {
 
   try {
 
-    const response = await fetch("/", {
+    const response = await fetch(
+      new URL("/chat", window.location.origin),
+      {
+        method: "POST",
 
-      method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
 
-      headers: {
-        "Content-Type": "application/json"
-      },
-
-      body: JSON.stringify({
-        message: message
-      })
-
-    });
+        body: JSON.stringify({
+          message: message
+        })
+      }
+    );
 
     const data = await response.json();
 
@@ -226,7 +227,6 @@ async function sendMessage() {
         data.response,
         "jarvis"
       );
-
     }
 
   } catch (error) {
@@ -276,17 +276,35 @@ input.addEventListener(
         });
       }
 
-      // Запрос к AI
+      // =========================
+      // ЧАТ С ИИ
+      // =========================
       if (
         request.method === "POST" &&
-        url.pathname === "/"
+        url.pathname === "/chat"
       ) {
 
         const body = await request.json();
 
         const userMessage =
-          body.message ||
-          "Привет, Джарвис.";
+          typeof body.message === "string"
+            ? body.message.trim()
+            : "";
+
+        if (!userMessage) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: "Сообщение не должно быть пустым."
+            }),
+            {
+              status: 400,
+              headers: {
+                "Content-Type": "application/json; charset=UTF-8"
+              }
+            }
+          );
+        }
 
         const result = await env.AI.run(
           "@cf/zai-org/glm-4.7-flash",
@@ -299,6 +317,7 @@ input.addEventListener(
                   "Отвечай на русском языке. " +
                   "Будь спокойным, уверенным, умным, вежливым и естественным. " +
                   "Помогай пользователю думать, учиться, планировать, принимать решения и выполнять задачи. " +
+                  "Обращайся к пользователю уважительно. " +
                   "Не выдавай себя за человека."
               },
               {
@@ -320,6 +339,51 @@ input.addEventListener(
             response: answer
           }),
           {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json; charset=UTF-8"
+            }
+          }
+        );
+      }
+
+      // =========================
+      // ДИАГНОСТИКА AI
+      // =========================
+      if (
+        request.method === "GET" &&
+        url.pathname === "/test-ai"
+      ) {
+
+        const result = await env.AI.run(
+          "@cf/zai-org/glm-4.7-flash",
+          {
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент. Отвечай на русском языке."
+              },
+              {
+                role: "user",
+                content:
+                  "Джарвис, представься одним предложением."
+              }
+            ]
+          }
+        );
+
+        return new Response(
+          JSON.stringify(
+            {
+              success: true,
+              ai_response: result
+            },
+            null,
+            2
+          ),
+          {
+            status: 200,
             headers: {
               "Content-Type": "application/json; charset=UTF-8"
             }
@@ -342,7 +406,7 @@ input.addEventListener(
       return new Response(
         JSON.stringify({
           success: false,
-          error: error.message
+          error: error?.message || "Неизвестная ошибка сервера."
         }),
         {
           status: 500,
