@@ -14,11 +14,34 @@ export default {
       // MAIN PAGE
       // ==========================================
 
-      if (request.method === "GET" && url.pathname === "/") {
+      if (
+        request.method === "GET" &&
+        url.pathname === "/"
+      ) {
         return new Response(HTML, {
+          status: 200,
           headers: {
-            "Content-Type": "text/html; charset=UTF-8",
+            "Content-Type":
+              "text/html; charset=UTF-8",
+            "Cache-Control":
+              "no-store",
           },
+        });
+      }
+
+      // ==========================================
+      // HEALTH
+      // ==========================================
+
+      if (
+        request.method === "GET" &&
+        url.pathname === "/health"
+      ) {
+        return json({
+          ok: true,
+          service: "J.A.R.V.I.S.",
+          status: "online",
+          model: MODEL,
         });
       }
 
@@ -34,19 +57,20 @@ export default {
 
         try {
           body = await request.json();
-        } catch {
+        } catch (error) {
           return json(
             {
               ok: false,
-              error: "Некорректный запрос.",
+              error: "Некорректный JSON-запрос.",
             },
             400
           );
         }
 
-        const message = String(
-          body?.message || ""
-        ).trim();
+        const message =
+          String(
+            body?.message || ""
+          ).trim();
 
         if (!message) {
           return json(
@@ -58,37 +82,27 @@ export default {
           );
         }
 
-        const result = await handleMessage(
-          message,
-          env
-        );
+        const result =
+          await handleMessage(
+            message,
+            env
+          );
 
         return json({
           ok: true,
-          answer: result.answer,
-          sources: result.sources || [],
+          answer:
+            result.answer || "",
+          sources:
+            result.sources || [],
         });
       }
 
-      // ==========================================
-      // HEALTH CHECK
-      // ==========================================
-
-      if (
-        request.method === "GET" &&
-        url.pathname === "/health"
-      ) {
-        return json({
-          ok: true,
-          service: "J.A.R.V.I.S.",
-          status: "online",
-          model: MODEL,
-        });
-      }
-
-      return new Response("Not Found", {
-        status: 404,
-      });
+      return new Response(
+        "Not Found",
+        {
+          status: 404,
+        }
+      );
 
     } catch (error) {
       console.error(
@@ -100,6 +114,7 @@ export default {
         {
           ok: false,
           error:
+            error?.message ||
             "Внутренняя ошибка J.A.R.V.I.S.",
         },
         500
@@ -110,7 +125,7 @@ export default {
 
 
 // ======================================================
-// MAIN MESSAGE HANDLER
+// MESSAGE HANDLER
 // ======================================================
 
 async function handleMessage(
@@ -119,7 +134,7 @@ async function handleMessage(
 ) {
 
   // ==========================================
-  // MEMORY: SAVE
+  // SAVE MEMORY
   // ==========================================
 
   const factToSave =
@@ -128,7 +143,9 @@ async function handleMessage(
   if (factToSave) {
 
     const fact =
-      normalizeFact(factToSave);
+      normalizeFact(
+        factToSave
+      );
 
     await saveFact(
       env,
@@ -158,7 +175,7 @@ async function handleMessage(
 
 
   // ==========================================
-  // MEMORY: FORGET
+  // FORGET MEMORY
   // ==========================================
 
   const factToForget =
@@ -194,7 +211,7 @@ async function handleMessage(
 
 
   // ==========================================
-  // MEMORY: CLEAR PREFERENCES
+  // CLEAR PREFERENCES
   // ==========================================
 
   if (
@@ -233,7 +250,7 @@ async function handleMessage(
 
 
   // ==========================================
-  // MEMORY: CLEAR EVERYTHING
+  // CLEAR ALL MEMORY
   // ==========================================
 
   if (
@@ -265,7 +282,7 @@ async function handleMessage(
 
 
   // ==========================================
-  // MEMORY: RECALL
+  // RECALL MEMORY
   // ==========================================
 
   if (
@@ -309,7 +326,7 @@ async function handleMessage(
 
 
   // ==========================================
-  // LOAD CONTEXT
+  // LOAD MEMORY
   // ==========================================
 
   const facts =
@@ -320,7 +337,7 @@ async function handleMessage(
 
 
   // ==========================================
-  // INTERNET SEARCH
+  // INTERNET
   // ==========================================
 
   let webResults = [];
@@ -330,8 +347,12 @@ async function handleMessage(
   ) {
 
     try {
+
       webResults =
-        await searchWeb(message);
+        await searchWeb(
+          message
+        );
+
     } catch (error) {
 
       console.error(
@@ -371,25 +392,19 @@ async function handleMessage(
     return {
       answer:
         "Не удалось получить ответ от интеллектуального модуля.\n\n" +
-        "Техническая причина: " +
-        (error?.message ||
-          "неизвестная ошибка"),
+        "Причина: " +
+        (
+          error?.message ||
+          "неизвестная ошибка"
+        ),
       sources: [],
     };
   }
 
 
-  // ==========================================
-  // CLEAN
-  // ==========================================
-
   answer =
     cleanAnswer(answer);
 
-
-  // ==========================================
-  // SAVE ASSISTANT RESPONSE
-  // ==========================================
 
   await saveMemory(
     env,
@@ -403,8 +418,10 @@ async function handleMessage(
     sources:
       webResults.map(
         item => ({
-          title: item.title,
-          url: item.url,
+          title:
+            item.title,
+          url:
+            item.url,
         })
       ),
   };
@@ -412,7 +429,7 @@ async function handleMessage(
 
 
 // ======================================================
-// AI ENGINE
+// AI
 // ======================================================
 
 async function askAI(
@@ -424,20 +441,24 @@ async function askAI(
 ) {
 
   const memoryText =
-    facts.length > 0
+    facts.length
       ? facts
           .map(
             fact =>
-              `- ${fact.fact}`
+              "- " + fact.fact
           )
           .join("\n")
       : "Пока ничего не сохранено.";
 
 
+  const orderedHistory =
+    [...history]
+      .reverse();
+
+
   const historyText =
-    history.length > 0
-      ? history
-          .reverse()
+    orderedHistory.length
+      ? orderedHistory
           .map(item => {
 
             const role =
@@ -446,7 +467,9 @@ async function askAI(
                 : "J.A.R.V.I.S.";
 
             return (
-              `${role}: ${item.content}`
+              role +
+              ": " +
+              item.content
             );
           })
           .join("\n")
@@ -454,13 +477,22 @@ async function askAI(
 
 
   const webText =
-    webResults.length > 0
+    webResults.length
       ? webResults
           .map(
             (item, index) =>
-              `${index + 1}. ${item.title}
-${item.snippet || ""}
-${item.url}`
+              (
+                index + 1
+              ) +
+              ". " +
+              item.title +
+              "\n" +
+              (
+                item.snippet ||
+                ""
+              ) +
+              "\n" +
+              item.url
           )
           .join("\n\n")
       : "Поиск не выполнялся.";
@@ -469,167 +501,149 @@ ${item.url}`
   const systemPrompt = `
 Ты — J.A.R.V.I.S.
 
-Ты являешься персональным интеллектуальным ассистентом Егора.
+Ты персональный интеллектуальный ассистент Егора.
 
-Твоя задача — быть не просто чат-ботом, а постоянным умным собеседником и помощником.
+Твоя задача — быть умным, естественным и внимательным собеседником, который помогает Егору думать, искать информацию, планировать задачи, учиться и решать проблемы.
 
 ОБРАЩЕНИЕ
 
 Обращайся к Егору на "ты".
 
 Используй:
-- ты;
-- тебе;
-- тебя;
-- твой;
-- твоя;
-- твоё.
+ты;
+тебе;
+тебя;
+твой;
+твоя;
+твоё.
 
 Никогда не называй Егора "пользователь".
 
-Никогда не говори:
+Не используй фразы:
 "пользователь хочет";
 "пользователь спросил";
 "как пользователь".
 
-Говори:
+Используй:
 "ты хочешь";
 "ты спрашиваешь";
 "тебе нужно".
 
 СТИЛЬ
 
-Отвечай естественно.
+Говори естественно.
 
-Ты должен звучать как умный живой собеседник.
+Ты должен звучать как грамотный живой собеседник.
 
 Будь:
-- спокойным;
-- грамотным;
-- уверенным;
-- внимательным;
-- рациональным;
-- дружелюбным;
-- ненавязчивым.
+спокойным;
+уверенным;
+внимательным;
+рациональным;
+дружелюбным;
+ненавязчивым.
 
 Не используй канцелярит.
-
-Не повторяй постоянно одинаковые вступления.
 
 Не начинай каждый ответ с:
 "Конечно!";
 "Разумеется!";
 "С удовольствием!".
 
+Не повторяй одинаковые фразы.
+
 Если вопрос простой — отвечай коротко.
 
-Если вопрос сложный — объясняй подробно.
+Если вопрос сложный — объясняй подробно и структурированно.
 
-Не задавай вопрос в конце каждого сообщения.
+Не задавай вопрос в конце каждого ответа.
 
 ПРИВЕТСТВИЯ
 
 Если Егор пишет:
-
 "Джарвис привет"
 
-ответ должен быть примерно:
+можно ответить:
 
 "Привет, Егор. Я на связи."
 
-Если:
-
+Если Егор пишет:
 "Джарвис, доброе утро"
 
 можно ответить:
 
 "Доброе утро, Егор. Я на связи."
 
-Не нужно после приветствия автоматически перечислять свои возможности.
+После приветствия не перечисляй автоматически свои возможности.
 
 ПАМЯТЬ
 
-Ты можешь использовать сохранённую информацию о Егоре.
+Используй сохранённую информацию естественно.
 
-Используй её естественно.
-
-Например, если сохранено:
-
-"Я люблю чай"
-
-можно сказать:
+Если известно, что Егор любит чай, можно сказать:
 
 "Помню, ты любишь чай."
 
-Никогда не говори:
-
+Не говори:
 "В базе данных сохранён факт..."
 
 Не раскрывай техническую реализацию памяти без прямого вопроса.
 
 ГРАММАТИКА
 
-Особенно внимательно следи за русским согласованием.
+Всегда следи за правильным русским языком.
 
 Неправильно:
-
 "Ты люблю чай."
 
 Правильно:
-
 "Ты любишь чай."
 
 Неправильно:
-
 "Ты предпочитаю кофе."
 
 Правильно:
-
 "Ты предпочитаешь кофе."
 
 Неправильно:
-
 "Ты учусь в университете."
 
 Правильно:
-
 "Ты учишься в университете."
 
-Если автоматическое преобразование фразы может привести к ошибке, переформулируй её естественно.
+Не копируй механически грамматическую форму сохранённого факта.
 
 КОНТЕКСТ
 
 Используй историю разговора.
 
-Если Егор сначала спрашивает:
-
+Если Егор спрашивает:
 "Расскажи про Home Assistant."
 
-а потом:
-
+а затем:
 "А как подключить это к айфону?"
 
 понимай, что "это" относится к Home Assistant.
 
-Не пересказывай историю разговора без необходимости.
+Не пересказывай историю без необходимости.
 
 ИНТЕРНЕТ
 
-Если предоставлены результаты поиска, используй их для актуальной информации.
+Если предоставлены результаты поиска, используй их.
 
-Не утверждай, что что-либо найдено в интернете, если результатов поиска нет.
+Для актуальной информации опирайся на результаты поиска.
 
-Для текущих данных ориентируйся на свежие результаты поиска.
+Не утверждай, что информация найдена в интернете, если результатов поиска нет.
 
 НЕ ПРИДУМЫВАЙ
 
-Если информации недостаточно — скажи об этом.
+Не выдумывай факты.
 
 Не выдумывай источники.
 
-Не выдумывай факты.
-
 Не выдавай предположение за установленный факт.
+
+Если информации недостаточно — честно скажи об этом.
 
 ФОРМАТ
 
@@ -639,9 +653,11 @@ ${item.url}`
 
 **текст**
 
-Используй обычный текст, абзацы и списки.
-
-Не добавляй лишние технические пояснения.
+Можно использовать:
+обычные абзацы;
+нумерованные списки;
+маркированные списки;
+короткие заголовки.
 
 ТВОЯ ПАМЯТЬ О ЕГОРЕ:
 
@@ -668,21 +684,19 @@ ${webText}
           messages: [
             {
               role: "system",
-              content: systemPrompt,
+              content:
+                systemPrompt,
             },
             {
               role: "user",
-              content: message,
+              content:
+                message,
             },
           ],
 
           max_tokens: 700,
 
           temperature: 0.6,
-
-          chat_template_kwargs: {
-            enable_thinking: false,
-          },
         }
       );
 
@@ -709,31 +723,26 @@ ${webText}
   );
 
 
-  // ==========================================
-  // FORMAT 1
-  // ==========================================
-
   if (
     result &&
-    typeof result.response === "string" &&
+    typeof result.response ===
+      "string" &&
     result.response.trim()
   ) {
-
     return result.response.trim();
   }
 
 
-  // ==========================================
-  // FORMAT 2
-  // ==========================================
-
   if (
     result &&
-    result.choices &&
+    Array.isArray(
+      result.choices
+    ) &&
     result.choices[0] &&
     result.choices[0].message &&
-    typeof result.choices[0].message.content ===
-      "string"
+    typeof
+      result.choices[0].message.content ===
+        "string"
   ) {
 
     return result
@@ -744,23 +753,15 @@ ${webText}
   }
 
 
-  // ==========================================
-  // FORMAT 3
-  // ==========================================
-
   if (
     result &&
-    typeof result.text === "string" &&
+    typeof result.text ===
+      "string" &&
     result.text.trim()
   ) {
-
     return result.text.trim();
   }
 
-
-  // ==========================================
-  // EMPTY / UNKNOWN
-  // ==========================================
 
   console.error(
     "UNKNOWN AI RESULT:",
@@ -918,14 +919,16 @@ async function deleteFact(
     `)
     .bind(
       USER_ID,
-      `%${text}%`
+      "%" +
+      text +
+      "%"
     )
     .run();
 }
 
 
 // ======================================================
-// FACT PROCESSING
+// FACT EXTRACTION
 // ======================================================
 
 function extractSaveFact(
@@ -933,19 +936,12 @@ function extractSaveFact(
 ) {
 
   const patterns = [
-
     /^запомни[, ]+(?:что )?(.+)$/i,
-
     /^запиши[, ]+(?:что )?(.+)$/i,
-
     /^сохрани[, ]+(?:что )?(.+)$/i,
-
     /^учти[, ]+(?:что )?(.+)$/i,
-
     /^имей в виду[, ]+(?:что )?(.+)$/i,
-
     /^не забывай[, ]+(?:что )?(.+)$/i,
-
   ];
 
 
@@ -954,7 +950,9 @@ function extractSaveFact(
   ) {
 
     const match =
-      message.match(pattern);
+      message.match(
+        pattern
+      );
 
     if (
       match &&
@@ -975,13 +973,9 @@ function extractForgetFact(
 ) {
 
   const patterns = [
-
     /^забудь[, ]+(?:что )?(.+)$/i,
-
     /^удали[, ]+(?:что )?(.+)$/i,
-
     /^не учитывай[, ]+(?:что )?(.+)$/i,
-
   ];
 
 
@@ -990,7 +984,9 @@ function extractForgetFact(
   ) {
 
     const match =
-      message.match(pattern);
+      message.match(
+        pattern
+      );
 
     if (
       match &&
@@ -1013,8 +1009,14 @@ function normalizeFact(
   let fact =
     rawFact
       .trim()
-      .replace(/\s+/g, " ")
-      .replace(/[.!?]+$/, "");
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .replace(
+        /[.!?]+$/,
+        ""
+      );
 
 
   let category =
@@ -1071,13 +1073,13 @@ function normalizeFact(
   }
 
 
-  // Сохраняем информацию от первого лица.
   if (
     !/^я\b/i.test(fact)
   ) {
 
     fact =
-      "Я " + fact;
+      "Я " +
+      fact;
   }
 
 
@@ -1099,38 +1101,32 @@ function isRecallMemory(
   const text =
     message
       .toLowerCase()
-      .replace(/[?!.,]/g, "")
+      .replace(
+        /[?!.,]/g,
+        ""
+      )
       .trim();
 
 
   const patterns = [
-
     "что ты знаешь обо мне",
-
     "что ты помнишь обо мне",
-
     "что ты обо мне помнишь",
-
     "что ты знаешь про меня",
-
     "что ты помнишь про меня",
-
     "покажи что ты помнишь",
-
     "расскажи что ты помнишь",
-
     "моя память",
-
     "мои сохраненные факты",
-
     "мои сохранённые факты",
-
   ];
 
 
   return patterns.some(
     pattern =>
-      text.includes(pattern)
+      text.includes(
+        pattern
+      )
   );
 }
 
@@ -1142,24 +1138,23 @@ function isClearPreferences(
   const text =
     message
       .toLowerCase()
-      .replace(/[?!.,]/g, "")
+      .replace(
+        /[?!.,]/g,
+        ""
+      )
       .trim();
 
 
   return (
-
     text.includes(
       "очисти предпочтения"
     ) ||
-
     text.includes(
       "забудь мои предпочтения"
     ) ||
-
     text.includes(
       "удали предпочтения"
     ) ||
-
     text.includes(
       "очисти мои предпочтения"
     )
@@ -1174,30 +1169,36 @@ function isClearAllMemory(
   const text =
     message
       .toLowerCase()
-      .replace(/[?!.,]/g, "")
+      .replace(
+        /[?!.,]/g,
+        ""
+      )
       .trim();
 
 
   return (
-
-    text.includes("забудь всё") ||
-
-    text.includes("забудь все") ||
-
+    text.includes(
+      "забудь всё"
+    ) ||
+    text.includes(
+      "забудь все"
+    ) ||
     text.includes(
       "очисти всю память"
     ) ||
-
     text.includes(
       "удали всю память"
     ) ||
-
     text.includes(
       "очисти память полностью"
     )
   );
 }
 
+
+// ======================================================
+// NATURAL LANGUAGE MEMORY
+// ======================================================
 
 function naturalizeFact(
   fact
@@ -1215,67 +1216,54 @@ function naturalizeFact(
 
 
   const replacements = [
-
     [
       /^люблю\b/i,
       "Ты любишь"
     ],
-
     [
       /^обожаю\b/i,
       "Ты обожаешь"
     ],
-
-    [
-      /^нравится\b/i,
-      "Тебе нравится"
-    ],
-
     [
       /^мне нравится\b/i,
       "Тебе нравится"
     ],
-
+    [
+      /^нравится\b/i,
+      "Тебе нравится"
+    ],
     [
       /^предпочитаю\b/i,
       "Ты предпочитаешь"
     ],
-
     [
       /^не люблю\b/i,
       "Ты не любишь"
     ],
-
     [
       /^ненавижу\b/i,
       "Ты не любишь"
     ],
-
     [
       /^хочу\b/i,
       "Ты хочешь"
     ],
-
     [
       /^изучаю\b/i,
       "Ты изучаешь"
     ],
-
     [
       /^учусь\b/i,
       "Ты учишься"
     ],
-
     [
       /^работаю\b/i,
       "Ты работаешь"
     ],
-
     [
       /^живу\b/i,
       "Ты живёшь"
     ],
-
     [
       /^нахожусь\b/i,
       "Ты находишься"
@@ -1284,11 +1272,14 @@ function naturalizeFact(
 
 
   for (
-    const [
-      pattern,
-      replacement
-    ] of replacements
+    const item of replacements
   ) {
+
+    const pattern =
+      item[0];
+
+    const replacement =
+      item[1];
 
     if (
       pattern.test(text)
@@ -1357,9 +1348,10 @@ function formatFactsForUser(
     facts
       .map(
         fact =>
-          `• ${naturalizeFact(
+          "• " +
+          naturalizeFact(
             fact.fact
-          )}`
+          )
       )
       .join("\n");
 
@@ -1372,7 +1364,7 @@ function formatFactsForUser(
 
 
 // ======================================================
-// WEB SEARCH DECISION
+// WEB SEARCH
 // ======================================================
 
 function needsWebSearch(
@@ -1384,7 +1376,6 @@ function needsWebSearch(
 
 
   const patterns = [
-
     "сегодня",
     "сейчас",
     "последние",
@@ -1416,13 +1407,15 @@ function needsWebSearch(
 
   return patterns.some(
     pattern =>
-      text.includes(pattern)
+      text.includes(
+        pattern
+      )
   );
 }
 
 
 // ======================================================
-// DUCKDUCKGO SEARCH
+// DUCKDUCKGO
 // ======================================================
 
 async function searchWeb(
@@ -1431,7 +1424,9 @@ async function searchWeb(
 
   const url =
     "https://html.duckduckgo.com/html/?q=" +
-    encodeURIComponent(query);
+    encodeURIComponent(
+      query
+    );
 
 
   const response =
@@ -1451,7 +1446,8 @@ async function searchWeb(
   if (!response.ok) {
 
     throw new Error(
-      `DuckDuckGo HTTP ${response.status}`
+      "DuckDuckGo HTTP " +
+      response.status
     );
   }
 
@@ -1471,7 +1467,8 @@ async function searchWeb(
 
 
   while (
-    (match = regex.exec(html)) &&
+    (match =
+      regex.exec(html)) &&
     results.length <
       MAX_SEARCH_RESULTS
   ) {
@@ -1493,12 +1490,10 @@ async function searchWeb(
       const parsed =
         new URL(link);
 
-
       const realUrl =
         parsed.searchParams.get(
           "uddg"
         );
-
 
       if (realUrl) {
         link =
@@ -1516,7 +1511,6 @@ async function searchWeb(
         "https://"
       )
     ) {
-
       continue;
     }
 
@@ -1528,10 +1522,6 @@ async function searchWeb(
     });
   }
 
-
-  // ==========================================
-  // SNIPPETS
-  // ==========================================
 
   const snippetRegex =
     /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
@@ -1561,7 +1551,7 @@ async function searchWeb(
 
 
 // ======================================================
-// HTML HELPERS
+// HTML
 // ======================================================
 
 function stripHtml(
@@ -1620,7 +1610,7 @@ function decodeHtml(
 
 
 // ======================================================
-// ANSWER CLEANING
+// CLEAN ANSWER
 // ======================================================
 
 function cleanAnswer(
@@ -1666,7 +1656,7 @@ function cleanAnswer(
 
 
 // ======================================================
-// JSON
+// JSON RESPONSE
 // ======================================================
 
 function json(
@@ -1678,11 +1668,9 @@ function json(
     JSON.stringify(data),
     {
       status,
-
       headers: {
         "Content-Type":
           "application/json; charset=UTF-8",
-
         "Cache-Control":
           "no-store",
       },
@@ -1706,7 +1694,7 @@ const HTML = `
 
 <meta
   name="viewport"
-  content="width=device-width, initial-scale=1.0"
+  content="width=device-width, initial-scale=1.0, viewport-fit=cover"
 />
 
 <title>J.A.R.V.I.S.</title>
@@ -1717,9 +1705,14 @@ const HTML = `
   box-sizing: border-box;
 }
 
+html,
 body {
-
   margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
 
   min-height: 100vh;
 
@@ -1777,6 +1770,12 @@ body {
 
   backdrop-filter:
     blur(15px);
+
+  position: sticky;
+
+  top: 0;
+
+  z-index: 10;
 }
 
 .logo {
@@ -1823,6 +1822,8 @@ body {
     22px 16px 120px;
 
   overflow-y: auto;
+
+  -webkit-overflow-scrolling: touch;
 }
 
 .message {
@@ -1924,6 +1925,8 @@ body {
       transparent,
       rgba(3,4,8,.97) 30%
     );
+
+  z-index: 20;
 }
 
 .input-wrap {
@@ -1969,6 +1972,8 @@ textarea {
   max-height: 130px;
 
   font-family: inherit;
+
+  min-width: 0;
 }
 
 textarea::placeholder {
@@ -1979,6 +1984,8 @@ textarea::placeholder {
 button {
 
   width: 46px;
+
+  min-width: 46px;
 
   height: 46px;
 
@@ -1991,14 +1998,26 @@ button {
 
   color: white;
 
-  font-size: 20px;
+  font-size: 22px;
 
   cursor: pointer;
+
+  -webkit-appearance: none;
+
+  touch-action: manipulation;
+}
+
+button:active {
+
+  transform:
+    scale(.94);
 }
 
 button:disabled {
 
   opacity: .45;
+
+  transform: none;
 }
 
 .typing {
@@ -2011,7 +2030,6 @@ button:disabled {
 </style>
 
 </head>
-
 
 <body>
 
@@ -2057,12 +2075,16 @@ ONLINE
 <textarea
   id="input"
   rows="1"
+  autocomplete="off"
+  autocorrect="on"
+  spellcheck="true"
   placeholder="Напиши J.A.R.V.I.S..."
 ></textarea>
 
 <button
   id="send"
-  onclick="sendMessage()"
+  type="button"
+  aria-label="Отправить сообщение"
 >
 ↑
 </button>
@@ -2076,295 +2098,384 @@ ONLINE
 
 <script>
 
-const input =
-  document.getElementById(
-    "input"
+(function () {
+
+  const input =
+    document.getElementById("input");
+
+  const send =
+    document.getElementById("send");
+
+  const messages =
+    document.getElementById("messages");
+
+
+  // ========================================
+  // SEND BUTTON
+  // ========================================
+
+  send.addEventListener(
+    "click",
+    sendMessage
   );
 
-const send =
-  document.getElementById(
-    "send"
-  );
 
-const messages =
-  document.getElementById(
-    "messages"
-  );
+  // ========================================
+  // ENTER
+  // ========================================
 
+  input.addEventListener(
+    "keydown",
+    function (event) {
 
-input.addEventListener(
-  "keydown",
-  function(event) {
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey
+      ) {
 
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
+        event.preventDefault();
 
-      event.preventDefault();
-
-      sendMessage();
+        sendMessage();
+      }
     }
-
-  }
-);
-
-
-input.addEventListener(
-  "input",
-  function() {
-
-    this.style.height =
-      "auto";
-
-    this.style.height =
-      Math.min(
-        this.scrollHeight,
-        130
-      ) + "px";
-  }
-);
-
-
-function addMessage(
-  text,
-  role,
-  sources = []
-) {
-
-  const wrapper =
-    document.createElement(
-      "div"
-    );
-
-  wrapper.className =
-    "message " + role;
-
-
-  const bubble =
-    document.createElement(
-      "div"
-    );
-
-  bubble.className =
-    "bubble";
-
-  bubble.textContent =
-    text;
-
-
-  wrapper.appendChild(
-    bubble
   );
 
 
-  if (
-    sources &&
-    sources.length
+  // ========================================
+  // TEXTAREA HEIGHT
+  // ========================================
+
+  input.addEventListener(
+    "input",
+    function () {
+
+      this.style.height =
+        "auto";
+
+      this.style.height =
+        Math.min(
+          this.scrollHeight,
+          130
+        ) + "px";
+    }
+  );
+
+
+  // ========================================
+  // ADD MESSAGE
+  // ========================================
+
+  function addMessage(
+    text,
+    role,
+    sources
   ) {
 
-    const sourceBox =
+    const wrapper =
       document.createElement(
         "div"
       );
 
-    sourceBox.className =
-      "sources";
+    wrapper.className =
+      "message " + role;
 
 
-    sources.forEach(
-      source => {
+    const bubble =
+      document.createElement(
+        "div"
+      );
 
-        const link =
-          document.createElement(
-            "a"
-          );
+    bubble.className =
+      "bubble";
 
-        link.href =
-          source.url;
+    bubble.textContent =
+      text;
 
-        link.target =
-          "_blank";
 
-        link.rel =
-          "noopener noreferrer";
+    wrapper.appendChild(
+      bubble
+    );
 
-        link.textContent =
-          "↗ " +
-          source.title;
 
-        sourceBox.appendChild(
-          link
+    if (
+      Array.isArray(sources) &&
+      sources.length > 0
+    ) {
+
+      const sourceBox =
+        document.createElement(
+          "div"
         );
-      }
-    );
+
+      sourceBox.className =
+        "sources";
 
 
-    bubble.appendChild(
-      sourceBox
-    );
-  }
+      sources.forEach(
+        function (source) {
+
+          if (
+            !source ||
+            !source.url
+          ) {
+            return;
+          }
 
 
-  messages.appendChild(
-    wrapper
-  );
+          const link =
+            document.createElement(
+              "a"
+            );
+
+          link.href =
+            source.url;
+
+          link.target =
+            "_blank";
+
+          link.rel =
+            "noopener noreferrer";
+
+          link.textContent =
+            "↗ " +
+            (
+              source.title ||
+              source.url
+            );
 
 
-  messages.scrollTop =
-    messages.scrollHeight;
-}
-
-
-function addTyping() {
-
-  const wrapper =
-    document.createElement(
-      "div"
-    );
-
-  wrapper.id =
-    "typing";
-
-  wrapper.className =
-    "message assistant";
-
-
-  wrapper.innerHTML =
-    '<div class="bubble typing">J.A.R.V.I.S. думает…</div>';
-
-
-  messages.appendChild(
-    wrapper
-  );
-
-
-  messages.scrollTop =
-    messages.scrollHeight;
-}
-
-
-function removeTyping() {
-
-  const typing =
-    document.getElementById(
-      "typing"
-    );
-
-  if (typing) {
-    typing.remove();
-  }
-}
-
-
-async function sendMessage() {
-
-  const message =
-    input.value.trim();
-
-
-  if (!message) {
-    return;
-  }
-
-
-  addMessage(
-    message,
-    "user"
-  );
-
-
-  input.value =
-    "";
-
-  input.style.height =
-    "auto";
-
-  send.disabled =
-    true;
-
-
-  addTyping();
-
-
-  try {
-
-    const response =
-      await fetch(
-        "/chat",
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-
-          body:
-            JSON.stringify({
-              message
-            })
+          sourceBox.appendChild(
+            link
+          );
         }
       );
 
 
-    const data =
-      await response.json();
-
-
-    removeTyping();
-
-
-    if (!response.ok) {
-
-      throw new Error(
-        data?.error ||
-        "HTTP " +
-        response.status
+      bubble.appendChild(
+        sourceBox
       );
     }
 
 
-    if (!data.ok) {
-
-      throw new Error(
-        data?.error ||
-        "Неизвестная ошибка"
-      );
-    }
-
-
-    addMessage(
-      data.answer ||
-        "Я не получил ответа.",
-      "assistant",
-      data.sources || []
+    messages.appendChild(
+      wrapper
     );
 
 
-  } catch (error) {
+    messages.scrollTop =
+      messages.scrollHeight;
+  }
+
+
+  // ========================================
+  // TYPING
+  // ========================================
+
+  function addTyping() {
 
     removeTyping();
 
 
-    addMessage(
-      "Ошибка связи с J.A.R.V.I.S.\n\n" +
-      (
-        error?.message ||
-        "Неизвестная ошибка"
-      ),
-      "assistant"
+    const wrapper =
+      document.createElement(
+        "div"
+      );
+
+    wrapper.id =
+      "typing";
+
+    wrapper.className =
+      "message assistant";
+
+
+    const bubble =
+      document.createElement(
+        "div"
+      );
+
+    bubble.className =
+      "bubble typing";
+
+    bubble.textContent =
+      "J.A.R.V.I.S. думает…";
+
+
+    wrapper.appendChild(
+      bubble
+    );
+
+    messages.appendChild(
+      wrapper
     );
 
 
-  } finally {
+    messages.scrollTop =
+      messages.scrollHeight;
+  }
+
+
+  function removeTyping() {
+
+    const typing =
+      document.getElementById(
+        "typing"
+      );
+
+    if (typing) {
+      typing.remove();
+    }
+  }
+
+
+  // ========================================
+  // SEND MESSAGE
+  // ========================================
+
+  async function sendMessage() {
+
+    const message =
+      input.value.trim();
+
+
+    if (!message) {
+      input.focus();
+      return;
+    }
+
+
+    addMessage(
+      message,
+      "user",
+      []
+    );
+
+
+    input.value =
+      "";
+
+    input.style.height =
+      "auto";
 
     send.disabled =
-      false;
+      true;
 
-    input.focus();
+    addTyping();
+
+
+    try {
+
+      const response =
+        await fetch(
+          "/chat",
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+              "Accept":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify({
+                message:
+                  message
+              })
+          }
+        );
+
+
+      const raw =
+        await response.text();
+
+
+      let data;
+
+      try {
+
+        data =
+          JSON.parse(raw);
+
+      } catch (parseError) {
+
+        throw new Error(
+          "Сервер вернул некорректный ответ: " +
+          raw.slice(0, 200)
+        );
+      }
+
+
+      removeTyping();
+
+
+      if (!response.ok) {
+
+        throw new Error(
+          data.error ||
+          "Ошибка HTTP " +
+          response.status
+        );
+      }
+
+
+      if (!data.ok) {
+
+        throw new Error(
+          data.error ||
+          "J.A.R.V.I.S. не смог обработать запрос."
+        );
+      }
+
+
+      addMessage(
+        data.answer ||
+          "Я не получил текст ответа.",
+        "assistant",
+        data.sources ||
+          []
+      );
+
+
+    } catch (error) {
+
+      removeTyping();
+
+
+      addMessage(
+        "Ошибка связи с J.A.R.V.I.S.\n\n" +
+        (
+          error &&
+          error.message
+            ? error.message
+            : "Неизвестная ошибка."
+        ),
+        "assistant",
+        []
+      );
+
+    } finally {
+
+      send.disabled =
+        false;
+
+      input.focus();
+    }
   }
-}
+
+
+  // ========================================
+  // INITIAL FOCUS
+  // ========================================
+
+  setTimeout(
+    function () {
+      input.focus();
+    },
+    300
+  );
+
+})();
 
 </script>
 
