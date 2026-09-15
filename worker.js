@@ -4,8 +4,8 @@ export default {
       const url = new URL(request.url);
 
       // Веб-интерфейс
-      if (request.method === "GET" && url.pathname === "/") {
-        const html = `
+      if (url.pathname === "/") {
+  const html = `
 <!DOCTYPE html>
 <html lang="ru">
 <head>
