@@ -6,7 +6,7 @@ export default {
       // =========================
       // ВЕБ-ИНТЕРФЕЙС J.A.R.V.I.S.
       // =========================
-      if (request.method === "GET" && url.pathname === "/") {
+      if (request.method === "GET" && url.pathname === "/chat") {
         const html = `
 <!DOCTYPE html>
 <html lang="ru">
