@@ -2,11 +2,17 @@ export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
+
+      // =========================================================
+      // ОСНОВНОЙ ID ПОЛЬЗОВАТЕЛЯ
+      // =========================================================
+
       const userId = "egor";
 
-      // ============================================================
+
+      // =========================================================
       // WEB INTERFACE
-      // ============================================================
+      // =========================================================
 
       if (request.method === "GET" && url.pathname === "/") {
 
@@ -65,6 +71,7 @@ h1 {
 .message {
   margin-bottom: 20px;
   line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .user {
@@ -98,6 +105,7 @@ button {
   background: white;
   color: black;
   font-weight: bold;
+  cursor: pointer;
 }
 
 button:disabled {
@@ -108,6 +116,7 @@ button:disabled {
 
 </head>
 
+
 <body>
 
 <div class="container">
@@ -117,6 +126,7 @@ button:disabled {
 <div class="status">
 ● Система активна
 </div>
+
 
 <div id="chat" class="chat">
 
@@ -129,6 +139,7 @@ button:disabled {
 </div>
 
 </div>
+
 
 <div class="input-area">
 
@@ -147,6 +158,7 @@ button:disabled {
 
 </div>
 
+
 <script>
 
 const input =
@@ -159,7 +171,11 @@ const chat =
   document.getElementById("chat");
 
 
-function addMessage(author, text, className) {
+function addMessage(
+  author,
+  text,
+  className
+) {
 
   const div =
     document.createElement("div");
@@ -167,23 +183,28 @@ function addMessage(author, text, className) {
   div.className =
     "message " + className;
 
+
   const strong =
     document.createElement("strong");
 
   strong.textContent =
     author;
 
+
   const br =
     document.createElement("br");
 
+
   const content =
     document.createTextNode(text);
+
 
   div.appendChild(strong);
 
   div.appendChild(br);
 
   div.appendChild(content);
+
 
   chat.appendChild(div);
 
@@ -192,14 +213,20 @@ function addMessage(author, text, className) {
 }
 
 
+
 async function sendMessage() {
 
   const message =
     input.value.trim();
 
-  if (!message) return;
+
+  if (!message) {
+    return;
+  }
+
 
   input.value = "";
+
 
   addMessage(
     "Вы",
@@ -207,24 +234,30 @@ async function sendMessage() {
     "user"
   );
 
+
   button.disabled = true;
 
   input.disabled = true;
 
+
   const loading =
     document.createElement("div");
 
+
   loading.className =
     "message jarvis";
+
 
   loading.innerHTML =
     "<strong>J.A.R.V.I.S.</strong><br>" +
     "Обрабатываю запрос...";
 
+
   chat.appendChild(loading);
 
   chat.scrollTop =
     chat.scrollHeight;
+
 
   try {
 
@@ -248,10 +281,13 @@ async function sendMessage() {
         }
       );
 
+
     const data =
       await response.json();
 
+
     loading.remove();
+
 
     if (
       !response.ok ||
@@ -261,10 +297,10 @@ async function sendMessage() {
       addMessage(
         "J.A.R.V.I.S.",
         "Ошибка: " +
-          (
-            data.error ||
-            "Неизвестная ошибка"
-          ),
+        (
+          data.error ||
+          "Неизвестная ошибка"
+        ),
         "jarvis"
       );
 
@@ -278,18 +314,21 @@ async function sendMessage() {
 
     }
 
+
   } catch (error) {
 
     loading.remove();
 
+
     addMessage(
       "J.A.R.V.I.S.",
       "Ошибка соединения: " +
-        error.message,
+      error.message,
       "jarvis"
     );
 
   }
+
 
   button.disabled = false;
 
@@ -298,6 +337,7 @@ async function sendMessage() {
   input.focus();
 
 }
+
 
 
 button.addEventListener(
@@ -311,7 +351,9 @@ input.addEventListener(
   function(event) {
 
     if (event.key === "Enter") {
+
       sendMessage();
+
     }
 
   }
@@ -324,6 +366,7 @@ input.addEventListener(
 </html>
 `;
 
+
         return new Response(
           html,
           {
@@ -335,34 +378,41 @@ input.addEventListener(
             }
           }
         );
+
       }
 
 
-      // ============================================================
-      // CHAT ENGINE
-      // ============================================================
+
+      // =========================================================
+      // CHAT
+      // =========================================================
 
       if (
         request.method === "POST" &&
         url.pathname === "/chat"
       ) {
 
+
         const body =
           await request.json();
+
 
         const userMessage =
           typeof body.message === "string"
             ? body.message.trim()
             : "";
 
+
         if (!userMessage) {
 
           return new Response(
+
             JSON.stringify({
               success: false,
               error:
                 "Сообщение не должно быть пустым."
             }),
+
             {
               status: 400,
 
@@ -371,22 +421,16 @@ input.addEventListener(
                   "application/json; charset=UTF-8"
               }
             }
+
           );
 
         }
 
 
-        // ==========================================================
-        // NORMALIZED USER MESSAGE
-        // ==========================================================
 
-        const lowerMessage =
-          userMessage.toLowerCase();
-
-
-        // ==========================================================
-        // LOAD LONG-TERM MEMORY
-        // ==========================================================
+        // =======================================================
+        // ЗАГРУЗКА ДОЛГОВРЕМЕННОЙ ПАМЯТИ
+        // =======================================================
 
         const factsResult =
           await env.DB.prepare(`
@@ -398,546 +442,15 @@ input.addEventListener(
           .bind(userId)
           .all();
 
+
         const facts =
           factsResult.results || [];
 
 
-        // ==========================================================
-        // DETECT MEMORY ACTION
-        // ==========================================================
 
-        let action = "chat";
-
-
-        if (
-          lowerMessage.includes("запомни") ||
-          lowerMessage.includes("сохрани") ||
-          lowerMessage.includes("учти на будущее") ||
-          lowerMessage.includes("запиши в память")
-        ) {
-
-          action = "save";
-
-        }
-
-
-        if (
-          lowerMessage.includes("забудь") ||
-          lowerMessage.includes("удали из памяти") ||
-          lowerMessage.includes("не запоминай")
-        ) {
-
-          action = "forget";
-
-        }
-
-
-        if (
-          lowerMessage.includes(
-            "удали все данные о моих предпочтениях"
-          ) ||
-          lowerMessage.includes(
-            "удали все мои предпочтения"
-          ) ||
-          lowerMessage.includes(
-            "забудь все мои предпочтения"
-          )
-        ) {
-
-          action = "clear_preferences";
-
-        }
-
-
-        if (
-          lowerMessage.includes(
-            "что ты обо мне знаешь"
-          ) ||
-          lowerMessage.includes(
-            "что ты знаешь обо мне"
-          ) ||
-          lowerMessage.includes(
-            "покажи мою память"
-          ) ||
-          lowerMessage.includes(
-            "что ты запомнил"
-          )
-        ) {
-
-          action = "recall";
-
-        }
-
-
-        // ==========================================================
-        // SAVE
-        // ==========================================================
-
-        if (action === "save") {
-
-          let fact =
-            userMessage
-              .replace(
-                /^.*?(запомни|сохрани|учти на будущее|запиши в память)\s*/i,
-                ""
-              )
-              .trim();
-
-
-          if (!fact) {
-
-            return new Response(
-              JSON.stringify({
-                success: true,
-                assistant: "J.A.R.V.I.S.",
-                response:
-                  "Уточните, какую именно информацию мне следует сохранить."
-              }),
-              {
-                status: 200,
-
-                headers: {
-                  "Content-Type":
-                    "application/json; charset=UTF-8"
-                }
-              }
-            );
-
-          }
-
-
-          // ----------------------------------------------
-          // DETERMINE CATEGORY
-          // ----------------------------------------------
-
-          let category = "general";
-
-
-          if (
-            lowerMessage.includes("люблю") ||
-            lowerMessage.includes("нравится") ||
-            lowerMessage.includes("предпочитаю") ||
-            lowerMessage.includes("любимый")
-          ) {
-
-            category = "preference";
-
-          }
-
-
-          if (
-            lowerMessage.includes("учусь") ||
-            lowerMessage.includes("университет") ||
-            lowerMessage.includes("учёб") ||
-            lowerMessage.includes("учеб")
-          ) {
-
-            category = "study";
-
-          }
-
-
-          if (
-            lowerMessage.includes("работаю") ||
-            lowerMessage.includes("работа")
-          ) {
-
-            category = "work";
-
-          }
-
-
-          if (
-            lowerMessage.includes("проект")
-          ) {
-
-            category = "project";
-
-          }
-
-
-          // ----------------------------------------------
-          // CHECK DUPLICATES
-          // ----------------------------------------------
-
-          const existingFacts =
-            await env.DB.prepare(`
-              SELECT id, fact
-              FROM facts
-              WHERE user_id = ?
-              AND category = ?
-            `)
-            .bind(
-              userId,
-              category
-            )
-            .all();
-
-
-          const existing =
-            existingFacts.results || [];
-
-
-          const normalizedFact =
-            fact.toLowerCase();
-
-
-          let duplicate = false;
-
-
-          for (const item of existing) {
-
-            if (
-              String(item.fact)
-                .toLowerCase() ===
-              normalizedFact
-            ) {
-
-              duplicate = true;
-
-              break;
-
-            }
-
-          }
-
-
-          if (!duplicate) {
-
-            await env.DB.prepare(`
-              INSERT INTO facts
-              (user_id, category, fact)
-              VALUES (?, ?, ?)
-            `)
-            .bind(
-              userId,
-              category,
-              fact
-            )
-            .run();
-
-          }
-
-
-          // ----------------------------------------------
-          // CONFIRM ONLY AFTER DATABASE OPERATION
-          // ----------------------------------------------
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              assistant: "J.A.R.V.I.S.",
-              response: duplicate
-                ? "Эта информация уже находится в моей долговременной памяти."
-                : "Принято. Информация успешно сохранена в моей долговременной памяти."
-            }),
-            {
-              status: 200,
-
-              headers: {
-                "Content-Type":
-                  "application/json; charset=UTF-8"
-              }
-            }
-          );
-
-        }
-
-
-        // ==========================================================
-        // CLEAR ALL PREFERENCES
-        // ==========================================================
-
-        if (
-          action === "clear_preferences"
-        ) {
-
-          await env.DB.prepare(`
-            DELETE FROM facts
-            WHERE user_id = ?
-            AND category = 'preference'
-          `)
-          .bind(userId)
-          .run();
-
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              assistant: "J.A.R.V.I.S.",
-              response:
-                "Готово. Все сохранённые данные из категории «предпочтения» удалены из долговременной памяти."
-            }),
-            {
-              status: 200,
-
-              headers: {
-                "Content-Type":
-                  "application/json; charset=UTF-8"
-              }
-            }
-          );
-
-        }
-
-
-        // ==========================================================
-        // FORGET SPECIFIC FACT
-        // ==========================================================
-
-        if (action === "forget") {
-
-          let searchText =
-            userMessage
-              .replace(
-                /^.*?(забудь|удали из памяти|не запоминай)\s*/i,
-                ""
-              )
-              .trim();
-
-
-          if (!searchText) {
-
-            return new Response(
-              JSON.stringify({
-                success: true,
-                assistant: "J.A.R.V.I.S.",
-                response:
-                  "Уточните, какую информацию мне следует забыть."
-              }),
-              {
-                status: 200,
-
-                headers: {
-                  "Content-Type":
-                    "application/json; charset=UTF-8"
-                }
-              }
-            );
-
-          }
-
-
-          const allFactsResult =
-            await env.DB.prepare(`
-              SELECT id, category, fact
-              FROM facts
-              WHERE user_id = ?
-              ORDER BY id ASC
-            `)
-            .bind(userId)
-            .all();
-
-
-          const allFacts =
-            allFactsResult.results || [];
-
-
-          const normalizedSearch =
-            searchText.toLowerCase();
-
-
-          let deleted = 0;
-
-
-          for (const item of allFacts) {
-
-            const normalizedFact =
-              String(item.fact)
-                .toLowerCase();
-
-
-            if (
-              normalizedFact.includes(
-                normalizedSearch
-              ) ||
-              normalizedSearch.includes(
-                normalizedFact
-              )
-            ) {
-
-              await env.DB.prepare(`
-                DELETE FROM facts
-                WHERE id = ?
-                AND user_id = ?
-              `)
-              .bind(
-                item.id,
-                userId
-              )
-              .run();
-
-
-              deleted++;
-
-            }
-
-          }
-
-
-          if (deleted > 0) {
-
-            return new Response(
-              JSON.stringify({
-                success: true,
-                assistant: "J.A.R.V.I.S.",
-                response:
-                  "Готово. Указанная информация удалена из моей долговременной памяти."
-              }),
-              {
-                status: 200,
-
-                headers: {
-                  "Content-Type":
-                    "application/json; charset=UTF-8"
-                }
-              }
-            );
-
-          }
-
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              assistant: "J.A.R.V.I.S.",
-              response:
-                "Я не нашёл в долговременной памяти факта, соответствующего вашему запросу."
-            }),
-            {
-              status: 200,
-
-              headers: {
-                "Content-Type":
-                  "application/json; charset=UTF-8"
-              }
-            }
-          );
-
-        }
-
-
-        // ==========================================================
-        // RECALL MEMORY
-        // ==========================================================
-
-        if (action === "recall") {
-
-          const currentFactsResult =
-            await env.DB.prepare(`
-              SELECT category, fact
-              FROM facts
-              WHERE user_id = ?
-              ORDER BY id ASC
-            `)
-            .bind(userId)
-            .all();
-
-
-          const currentFacts =
-            currentFactsResult.results || [];
-
-
-          if (currentFacts.length === 0) {
-
-            return new Response(
-              JSON.stringify({
-                success: true,
-                assistant: "J.A.R.V.I.S.",
-                response:
-                  "В моей долговременной памяти пока нет сохранённых сведений о вас."
-              }),
-              {
-                status: 200,
-
-                headers: {
-                  "Content-Type":
-                    "application/json; charset=UTF-8"
-                }
-              }
-            );
-
-          }
-
-
-          const categoryNames = {
-            preference: "Предпочтения",
-            study: "Учёба",
-            work: "Работа",
-            project: "Проекты",
-            general: "Общее"
-          };
-
-
-          const grouped = {};
-
-
-          for (const item of currentFacts) {
-
-            const category =
-              categoryNames[item.category] ||
-              item.category;
-
-
-            if (!grouped[category]) {
-              grouped[category] = [];
-            }
-
-
-            grouped[category].push(
-              item.fact
-            );
-
-          }
-
-
-          let response =
-            "В моей долговременной памяти сейчас сохранено:\n\n";
-
-
-          for (
-            const category in grouped
-          ) {
-
-            response +=
-              category + ":\n";
-
-            for (
-              const fact of grouped[category]
-            ) {
-
-              response +=
-                "• " + fact + "\n";
-
-            }
-
-            response += "\n";
-
-          }
-
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              assistant: "J.A.R.V.I.S.",
-              response: response.trim()
-            }),
-            {
-              status: 200,
-
-              headers: {
-                "Content-Type":
-                  "application/json; charset=UTF-8"
-              }
-            }
-          );
-
-        }
-
-
-        // ==========================================================
-        // NORMAL CHAT
-        // ==========================================================
+        // =======================================================
+        // ЗАГРУЗКА ИСТОРИИ
+        // =======================================================
 
         const memoryResult =
           await env.DB.prepare(`
@@ -960,48 +473,887 @@ input.addEventListener(
             }));
 
 
-        let factsText = "";
+
+        // =======================================================
+        // ПРЕОБРАЗОВАНИЕ ПАМЯТИ В ЧЕЛОВЕЧЕСКИЙ ВИД
+        // =======================================================
+
+        let memoryText =
+          "СОХРАНЁННЫЕ СВЕДЕНИЯ О ПОЛЬЗОВАТЕЛЕ:\n";
 
 
-        if (facts.length > 0) {
+        if (facts.length === 0) {
 
-          factsText =
-            "\n\nДОЛГОВРЕМЕННАЯ ПАМЯТЬ:\n" +
+          memoryText +=
+            "Сохранённых сведений нет.";
 
+        } else {
+
+          memoryText +=
             facts
-              .map(
-                item =>
-                  `- [${item.category}] ${item.fact}`
-              )
+              .map(item => {
+
+                return (
+                  "- " +
+                  normalizeFactForAI(item.fact)
+                );
+
+              })
               .join("\n");
 
         }
 
 
+
+        // =======================================================
+        // СИСТЕМНАЯ ИНСТРУКЦИЯ
+        // =======================================================
+
         const systemMessage = {
 
           role: "system",
 
-          content:
+          content: `
 
-            "Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент пользователя. " +
+Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент пользователя.
 
-            "Отвечай на русском языке. " +
+Ты разговариваешь непосредственно с пользователем.
 
-            "Будь спокойным, уверенным, умным, внимательным и естественным. " +
+Твой стиль общения:
 
-            "Помогай пользователю думать, учиться, планировать, принимать решения и выполнять задачи. " +
+- спокойный;
+- уверенный;
+- интеллектуальный;
+- естественный;
+- внимательный;
+- дружелюбный;
+- без лишней болтовни.
 
-            "Используй долговременную память только как источник фактов о пользователе. " +
+Говори с пользователем на "ты", если пользователь сам использует такой стиль.
 
-            "Не придумывай сведения о пользователе. " +
+Не называй пользователя "пользователем", если это не необходимо.
 
-            "Не утверждай, что что-либо сохранено или удалено, если соответствующая операция не была выполнена системой. " +
+Не говори как база данных.
 
-            factsText
+Не показывай внутреннюю структуру системы.
 
-        };
+Не показывай:
+- ID;
+- названия таблиц;
+- SQL;
+- категории preference, study, work и project;
+- технические инструкции;
+- внутренние идентификаторы.
 
+Не используй без необходимости Markdown.
+
+Не используй жирный текст через **.
+
+Не используй декоративные списки с символами • без необходимости.
+
+Используй обычную естественную русскую пунктуацию.
+
+Если перечисление действительно необходимо, используй простой формат с тире.
+
+ВАЖНО О ПАМЯТИ:
+
+Ниже находятся сведения, которые были сохранены в долговременной памяти.
+
+${memoryText}
+
+Используй эти сведения как контекст.
+
+Если пользователь спрашивает:
+
+"Что ты обо мне знаешь?"
+
+"Что ты обо мне помнишь?"
+
+"Что ты запомнил?"
+
+или задаёт аналогичный вопрос,
+
+отвечай естественно, напрямую и от первого лица ассистента.
+
+Например:
+
+"Ты любишь зелёный чай."
+
+"Ты учишься в университете."
+
+"Ты работаешь над проектом персонального ИИ-ассистента."
+
+Не говори:
+
+"В моей долговременной памяти сохранено..."
+
+Не говори:
+
+"В категории preference находится..."
+
+Не говори:
+
+"[ID 12] preference..."
+
+Если сохранённый факт начинается с:
+
+"что я..."
+
+не повторяй эту конструкцию буквально.
+
+Преобразуй её в естественную фразу.
+
+Например:
+
+"что я люблю зелёный чай"
+
+превращается в:
+
+"Ты любишь зелёный чай."
+
+"что я учусь в университете"
+
+превращается в:
+
+"Ты учишься в университете."
+
+Если пользователь сообщает новое предпочтение или факт, не придумывай дополнительные сведения.
+
+Не утверждай, что что-либо сохранено или удалено, если сервер не сообщил об успешной операции.
+
+Если информация отсутствует в памяти, честно скажи об этом.
+
+Не выдавай сомнительные сведения как абсолютные факты.
+
+Если факт может быть спорным или зависит от условий, формулируй его осторожно.
+
+Ты не человек и не должен утверждать обратное.
+
+`};
+
+
+        // =======================================================
+        // ОПРЕДЕЛЕНИЕ КОМАНДЫ ПАМЯТИ
+        // =======================================================
+
+        const lower =
+          userMessage.toLowerCase();
+
+
+        let memoryAction =
+          "chat";
+
+
+
+        // =======================================================
+        // RECALL
+        // =======================================================
+
+        if (
+
+          lower.includes(
+            "что ты обо мне знаешь"
+          ) ||
+
+          lower.includes(
+            "что ты обо мне помнишь"
+          ) ||
+
+          lower.includes(
+            "что ты запомнил"
+          ) ||
+
+          lower.includes(
+            "покажи мою память"
+          ) ||
+
+          lower.includes(
+            "какие данные ты обо мне знаешь"
+          )
+
+        ) {
+
+          memoryAction =
+            "recall";
+
+        }
+
+
+
+        // =======================================================
+        // CLEAR ALL
+        // =======================================================
+
+        else if (
+
+          lower.includes(
+            "удали всю память"
+          ) ||
+
+          lower.includes(
+            "очисти всю память"
+          ) ||
+
+          lower.includes(
+            "забудь всё обо мне"
+          ) ||
+
+          lower.includes(
+            "забудь все обо мне"
+          ) ||
+
+          lower.includes(
+            "удали все данные обо мне"
+          )
+
+        ) {
+
+          memoryAction =
+            "clear_all";
+
+        }
+
+
+
+        // =======================================================
+        // CLEAR PREFERENCES
+        // =======================================================
+
+        else if (
+
+          lower.includes(
+            "удали все мои предпочтения"
+          ) ||
+
+          lower.includes(
+            "удали все данные о моих предпочтениях"
+          ) ||
+
+          lower.includes(
+            "забудь все мои предпочтения"
+          ) ||
+
+          lower.includes(
+            "забудь мои предпочтения"
+          ) ||
+
+          lower.includes(
+            "очисти мои предпочтения"
+          )
+
+        ) {
+
+          memoryAction =
+            "clear_preferences";
+
+        }
+
+
+
+        // =======================================================
+        // FORGET SPECIFIC
+        // =======================================================
+
+        else if (
+
+          lower.includes(
+            "забудь"
+          ) ||
+
+          lower.includes(
+            "удали из памяти"
+          ) ||
+
+          lower.includes(
+            "не запоминай"
+          )
+
+        ) {
+
+          memoryAction =
+            "forget";
+
+        }
+
+
+
+        // =======================================================
+        // SAVE
+        // =======================================================
+
+        else if (
+
+          lower.includes(
+            "запомни"
+          ) ||
+
+          lower.includes(
+            "сохрани"
+          ) ||
+
+          lower.includes(
+            "учти на будущее"
+          )
+
+        ) {
+
+          memoryAction =
+            "save";
+
+        }
+
+
+
+        // =======================================================
+        // РЕЗУЛЬТАТ ОПЕРАЦИИ
+        // =======================================================
+
+        let operationResult =
+          "";
+
+
+
+        // =======================================================
+        // SAVE
+        // =======================================================
+
+        if (
+          memoryAction === "save"
+        ) {
+
+
+          let fact =
+            userMessage
+              .replace(
+                /^.*?(запомни|сохрани|учти на будущее)\s*/i,
+                ""
+              )
+              .trim();
+
+
+          fact =
+            normalizeSavedFact(
+              fact
+            );
+
+
+          if (fact) {
+
+
+            let category =
+              "general";
+
+
+            if (
+
+              lower.includes("люблю") ||
+              lower.includes("нравится") ||
+              lower.includes("предпочитаю") ||
+              lower.includes("любимый") ||
+              lower.includes("любимая") ||
+              lower.includes("любимое")
+
+            ) {
+
+              category =
+                "preference";
+
+            }
+
+
+            else if (
+
+              lower.includes("учусь") ||
+              lower.includes("университет") ||
+              lower.includes("учёб") ||
+              lower.includes("учеб")
+
+            ) {
+
+              category =
+                "study";
+
+            }
+
+
+            else if (
+
+              lower.includes("работаю") ||
+              lower.includes("работа")
+
+            ) {
+
+              category =
+                "work";
+
+            }
+
+
+            else if (
+
+              lower.includes("проект")
+
+            ) {
+
+              category =
+                "project";
+
+            }
+
+
+
+            // ===================================================
+            // ПРОВЕРКА НА ДУБЛИКАТ
+            // ===================================================
+
+            const existingResult =
+              await env.DB.prepare(`
+                SELECT id, fact
+                FROM facts
+                WHERE user_id = ?
+                AND category = ?
+              `)
+              .bind(
+                userId,
+                category
+              )
+              .all();
+
+
+            const existingFacts =
+              existingResult.results || [];
+
+
+            let duplicate =
+              false;
+
+
+            const normalizedNewFact =
+              fact.toLowerCase();
+
+
+            for (
+              const existing
+              of existingFacts
+            ) {
+
+              const normalizedExisting =
+                String(existing.fact)
+                  .toLowerCase();
+
+
+              if (
+                normalizedExisting ===
+                normalizedNewFact
+              ) {
+
+                duplicate =
+                  true;
+
+                break;
+
+              }
+
+            }
+
+
+
+            if (duplicate) {
+
+              operationResult =
+                "Я уже помню это.";
+
+            } else {
+
+
+              // ===============================================
+              // СОХРАНЕНИЕ
+              // ===============================================
+
+              const insertResult =
+                await env.DB.prepare(`
+                  INSERT INTO facts
+                  (user_id, category, fact)
+                  VALUES (?, ?, ?)
+                `)
+                .bind(
+                  userId,
+                  category,
+                  fact
+                )
+                .run();
+
+
+              if (
+                insertResult &&
+                insertResult.success !== false
+              ) {
+
+                operationResult =
+                  "Запомнил. " +
+                  factToNaturalSentence(
+                    fact
+                  );
+
+              } else {
+
+                operationResult =
+                  "Мне не удалось сохранить эту информацию.";
+
+              }
+
+            }
+
+          } else {
+
+            operationResult =
+              "Уточни, какую именно информацию мне нужно запомнить.";
+
+          }
+
+        }
+
+
+
+        // =======================================================
+        // FORGET SPECIFIC
+        // =======================================================
+
+        if (
+          memoryAction === "forget"
+        ) {
+
+
+          const searchText =
+            userMessage
+              .replace(
+                /^.*?(забудь|удали из памяти|не запоминай)\s*/i,
+                ""
+              )
+              .trim();
+
+
+          if (searchText) {
+
+
+            const allFactsResult =
+              await env.DB.prepare(`
+                SELECT id, fact
+                FROM facts
+                WHERE user_id = ?
+              `)
+              .bind(userId)
+              .all();
+
+
+            const allFacts =
+              allFactsResult.results || [];
+
+
+            const normalizedSearch =
+              normalizeForSearch(
+                searchText
+              );
+
+
+            let deletedCount =
+              0;
+
+
+            for (
+              const item
+              of allFacts
+            ) {
+
+
+              const normalizedFact =
+                normalizeForSearch(
+                  item.fact
+                );
+
+
+              if (
+
+                normalizedFact.includes(
+                  normalizedSearch
+                ) ||
+
+                normalizedSearch.includes(
+                  normalizedFact
+                )
+
+              ) {
+
+
+                const deleteResult =
+                  await env.DB.prepare(`
+                    DELETE FROM facts
+                    WHERE id = ?
+                    AND user_id = ?
+                  `)
+                  .bind(
+                    item.id,
+                    userId
+                  )
+                  .run();
+
+
+                if (
+                  deleteResult &&
+                  deleteResult.success !== false
+                ) {
+
+                  deletedCount++;
+
+                }
+
+              }
+
+            }
+
+
+            if (
+              deletedCount > 0
+            ) {
+
+              operationResult =
+                "Готово. " +
+                (
+                  deletedCount === 1
+                    ? "Эта информация удалена из моей памяти."
+                    : "Эти сведения удалены из моей памяти."
+                );
+
+            } else {
+
+              operationResult =
+                "Я не нашёл в памяти подходящей информации для удаления.";
+
+            }
+
+          } else {
+
+            operationResult =
+              "Уточни, какую именно информацию мне нужно забыть.";
+
+          }
+
+        }
+
+
+
+        // =======================================================
+        // CLEAR PREFERENCES
+        // =======================================================
+
+        if (
+          memoryAction ===
+          "clear_preferences"
+        ) {
+
+
+          const deleteResult =
+            await env.DB.prepare(`
+              DELETE FROM facts
+              WHERE user_id = ?
+              AND category = ?
+            `)
+            .bind(
+              userId,
+              "preference"
+            )
+            .run();
+
+
+          if (
+            deleteResult &&
+            deleteResult.success !== false
+          ) {
+
+            operationResult =
+              "Готово. Все сохранённые сведения о твоих предпочтениях удалены из моей памяти.";
+
+          } else {
+
+            operationResult =
+              "Мне не удалось удалить предпочтения.";
+
+          }
+
+        }
+
+
+
+        // =======================================================
+        // CLEAR ALL
+        // =======================================================
+
+        if (
+          memoryAction === "clear_all"
+        ) {
+
+
+          const deleteResult =
+            await env.DB.prepare(`
+              DELETE FROM facts
+              WHERE user_id = ?
+            `)
+            .bind(userId)
+            .run();
+
+
+          if (
+            deleteResult &&
+            deleteResult.success !== false
+          ) {
+
+            operationResult =
+              "Готово. Вся долговременная память обо мне очищена.";
+
+          } else {
+
+            operationResult =
+              "Мне не удалось очистить долговременную память.";
+
+          }
+
+        }
+
+
+
+        // =======================================================
+        // RECALL
+        // =======================================================
+
+        if (
+          memoryAction === "recall"
+        ) {
+
+
+          const currentFactsResult =
+            await env.DB.prepare(`
+              SELECT category, fact
+              FROM facts
+              WHERE user_id = ?
+              ORDER BY id ASC
+            `)
+            .bind(userId)
+            .all();
+
+
+          const currentFacts =
+            currentFactsResult.results || [];
+
+
+          if (
+            currentFacts.length === 0
+          ) {
+
+            operationResult =
+              "Сейчас я ничего о тебе не храню в долговременной памяти.";
+
+          } else {
+
+
+            const naturalFacts =
+              currentFacts.map(
+                item =>
+                  factToNaturalSentence(
+                    item.fact
+                  )
+              );
+
+
+            operationResult =
+              "Насколько я помню:\n\n" +
+              naturalFacts
+                .map(
+                  fact =>
+                    "- " + fact
+                )
+                .join("\n");
+
+          }
+
+        }
+
+
+
+        // =======================================================
+        // ОТВЕТ НА КОМАНДУ ПАМЯТИ
+        // =======================================================
+
+        if (
+          memoryAction !== "chat" &&
+          operationResult
+        ) {
+
+
+          // Сохраняем историю команды
+
+          await env.DB.prepare(`
+            INSERT INTO memory
+            (user_id, role, content)
+            VALUES (?, ?, ?)
+          `)
+          .bind(
+            userId,
+            "user",
+            userMessage
+          )
+          .run();
+
+
+          // Сохраняем ответ
+
+          await env.DB.prepare(`
+            INSERT INTO memory
+            (user_id, role, content)
+            VALUES (?, ?, ?)
+          `)
+          .bind(
+            userId,
+            "assistant",
+            operationResult
+          )
+          .run();
+
+
+          return new Response(
+
+            JSON.stringify({
+
+              success: true,
+
+              assistant:
+                "J.A.R.V.I.S.",
+
+              response:
+                operationResult,
+
+              memory_action:
+                memoryAction
+
+            }),
+
+            {
+              status: 200,
+
+              headers: {
+                "Content-Type":
+                  "application/json; charset=UTF-8"
+              }
+            }
+
+          );
+
+        }
+
+
+
+        // =======================================================
+        // ОБЫЧНЫЙ AI-ДИАЛОГ
+        // =======================================================
 
         const messages = [
 
@@ -1026,14 +1378,25 @@ input.addEventListener(
           );
 
 
-        const answer =
+        let answer =
           result?.choices?.[0]?.message?.content ||
-          "Не удалось получить текст ответа от модели.";
+          "Не удалось получить ответ от модели.";
 
 
-        // ==========================================================
-        // SAVE CHAT HISTORY
-        // ==========================================================
+        // =======================================================
+        // ОЧИСТКА ЛИШНЕГО MARKDOWN
+        // =======================================================
+
+        answer =
+          cleanAssistantText(
+            answer
+          );
+
+
+
+        // =======================================================
+        // СОХРАНЕНИЕ ИСТОРИИ
+        // =======================================================
 
         await env.DB.prepare(`
           INSERT INTO memory
@@ -1061,12 +1424,24 @@ input.addEventListener(
         .run();
 
 
+
         return new Response(
+
           JSON.stringify({
+
             success: true,
-            assistant: "J.A.R.V.I.S.",
-            response: answer
+
+            assistant:
+              "J.A.R.V.I.S.",
+
+            response:
+              answer,
+
+            memory_action:
+              "chat"
+
           }),
+
           {
             status: 200,
 
@@ -1075,41 +1450,52 @@ input.addEventListener(
                 "application/json; charset=UTF-8"
             }
           }
+
         );
 
       }
 
 
-      // ============================================================
-      // AI DIAGNOSTIC
-      // ============================================================
+
+      // =========================================================
+      // TEST AI
+      // =========================================================
 
       if (
         request.method === "GET" &&
         url.pathname === "/test-ai"
       ) {
 
+
         const result =
           await env.AI.run(
             "@cf/zai-org/glm-4.7-flash",
             {
+
               messages: [
+
                 {
                   role: "system",
+
                   content:
                     "Ты J.A.R.V.I.S. — персональный интеллектуальный ассистент. Отвечай на русском языке."
                 },
+
                 {
                   role: "user",
+
                   content:
                     "Джарвис, представься одним предложением."
                 }
+
               ]
+
             }
           );
 
 
         return new Response(
+
           JSON.stringify(
             {
               success: true,
@@ -1118,6 +1504,7 @@ input.addEventListener(
             null,
             2
           ),
+
           {
             status: 200,
 
@@ -1126,9 +1513,11 @@ input.addEventListener(
                 "application/json; charset=UTF-8"
             }
           }
+
         );
 
       }
+
 
 
       return new Response(
@@ -1141,13 +1530,19 @@ input.addEventListener(
 
     } catch (error) {
 
+
       return new Response(
+
         JSON.stringify({
+
           success: false,
+
           error:
             error?.message ||
             "Неизвестная ошибка сервера."
+
         }),
+
         {
           status: 500,
 
@@ -1156,9 +1551,375 @@ input.addEventListener(
               "application/json; charset=UTF-8"
           }
         }
+
       );
 
     }
 
   }
+
 };
+
+
+
+// =============================================================
+// FUNCTIONS
+// =============================================================
+
+
+// -------------------------------------------------------------
+// ОЧИСТКА СОХРАНЯЕМОГО ФАКТА
+// -------------------------------------------------------------
+
+function normalizeSavedFact(text) {
+
+  let result =
+    String(text || "").trim();
+
+
+  result =
+    result.replace(
+      /^[,.:;\-\s]+/,
+      ""
+    );
+
+
+  result =
+    result.replace(
+      /[.]+$/,
+      ""
+    );
+
+
+  // Убираем начало "что я"
+
+  result =
+    result.replace(
+      /^что\s+я\s+/i,
+      ""
+    );
+
+
+  // Убираем "что мне"
+
+  result =
+    result.replace(
+      /^что\s+мне\s+/i,
+      ""
+    );
+
+
+  return result.trim();
+
+}
+
+
+
+// -------------------------------------------------------------
+// НОРМАЛИЗАЦИЯ ДЛЯ ПОИСКА
+// -------------------------------------------------------------
+
+function normalizeForSearch(text) {
+
+  return String(text || "")
+    .toLowerCase()
+    .replace(
+      /[.,!?;:"'«»()[\]{}]/g,
+      " "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim();
+
+}
+
+
+
+// -------------------------------------------------------------
+// ПРЕОБРАЗОВАНИЕ ФАКТА В ЕСТЕСТВЕННУЮ ФРАЗУ
+// -------------------------------------------------------------
+
+function factToNaturalSentence(
+  text
+) {
+
+  let result =
+    String(text || "").trim();
+
+
+  result =
+    result.replace(
+      /^что\s+я\s+/i,
+      ""
+    );
+
+
+  result =
+    result.replace(
+      /^я\s+/i,
+      ""
+    );
+
+
+  result =
+    result.replace(
+      /[.]+$/,
+      ""
+    );
+
+
+  if (!result) {
+    return "Ты не сообщил мне никаких дополнительных сведений.";
+  }
+
+
+  // Если уже начинается с естественной формы
+
+  if (
+    /^(ты|тебе|твой|твоя|твои|твое|твоё)\b/i
+      .test(result)
+  ) {
+
+    return capitalizeFirst(
+      result
+    );
+
+  }
+
+
+  // ===========================================================
+  // ЛЮБЛЮ
+  // ===========================================================
+
+  if (
+    /^люблю\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      "Ты " + result
+    );
+
+  }
+
+
+  // ===========================================================
+  // НРАВИТСЯ
+  // ===========================================================
+
+  if (
+    /^нравится\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      "Тебе " + result
+    );
+
+  }
+
+
+  // ===========================================================
+  // ПРЕДПОЧИТАЮ
+  // ===========================================================
+
+  if (
+    /^предпочитаю\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      "Ты " + result
+    );
+
+  }
+
+
+  // ===========================================================
+  // УЧУСЬ
+  // ===========================================================
+
+  if (
+    /^учусь\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      "Ты " + result
+    );
+
+  }
+
+
+  // ===========================================================
+  // РАБОТАЮ
+  // ===========================================================
+
+  if (
+    /^работаю\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      "Ты " + result
+    );
+
+  }
+
+
+  // ===========================================================
+  // ЗАНИМАЮСЬ
+  // ===========================================================
+
+  if (
+    /^занимаюсь\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      "Ты " + result
+    );
+
+  }
+
+
+  // ===========================================================
+  // ПОЛЬЗУЮСЬ
+  // ===========================================================
+
+  if (
+    /^пользуюсь\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      "Ты " + result
+    );
+
+  }
+
+
+  // ===========================================================
+  // ЕСЛИ ФАКТ УЖЕ ЕСТЬ В ФОРМЕ "мне нравится"
+  // ===========================================================
+
+  if (
+    /^мне\s+/i.test(result)
+  ) {
+
+    return capitalizeFirst(
+      result
+    );
+
+  }
+
+
+  // ===========================================================
+  // ОБЩИЙ ВАРИАНТ
+  // ===========================================================
+
+  return capitalizeFirst(
+    result
+  );
+
+}
+
+
+
+// -------------------------------------------------------------
+// НОРМАЛИЗАЦИЯ ПАМЯТИ ДЛЯ AI
+// -------------------------------------------------------------
+
+function normalizeFactForAI(
+  text
+) {
+
+  let result =
+    String(text || "").trim();
+
+
+  result =
+    result.replace(
+      /^что\s+я\s+/i,
+      ""
+    );
+
+
+  return result;
+
+}
+
+
+
+// -------------------------------------------------------------
+// ПЕРВАЯ БУКВА — ЗАГЛАВНАЯ
+// -------------------------------------------------------------
+
+function capitalizeFirst(
+  text
+) {
+
+  const value =
+    String(text || "").trim();
+
+
+  if (!value) {
+    return value;
+  }
+
+
+  return (
+    value.charAt(0).toUpperCase() +
+    value.slice(1)
+  );
+
+}
+
+
+
+// -------------------------------------------------------------
+// ОЧИСТКА ОТ ЛИШНЕГО MARKDOWN
+// -------------------------------------------------------------
+
+function cleanAssistantText(
+  text
+) {
+
+  let result =
+    String(text || "");
+
+
+  // Убираем жирный Markdown
+
+  result =
+    result.replace(
+      /\*\*(.*?)\*\*/g,
+      "$1"
+    );
+
+
+  // Убираем одиночные звёздочки
+
+  result =
+    result.replace(
+      /(?<!\w)\*(?!\w)/g,
+      ""
+    );
+
+
+  // Убираем лишние тройные и более переносы
+
+  result =
+    result.replace(
+      /\n{3,}/g,
+      "\n\n"
+    );
+
+
+  // Убираем пробелы перед знаками препинания
+
+  result =
+    result.replace(
+      /\s+([,.!?;:])/g,
+      "$1"
+    );
+
+
+  return result.trim();
+
+}
