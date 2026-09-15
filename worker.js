@@ -5,6 +5,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // ==============================
+    // WEB INTERFACE
+    // ==============================
+
     if (request.method === "GET" && url.pathname === "/") {
       return new Response(HTML, {
         headers: {
@@ -13,22 +17,27 @@ export default {
       });
     }
 
+    // ==============================
+    // CHAT
+    // ==============================
+
     if (request.method === "POST" && url.pathname === "/chat") {
       try {
         const body = await request.json();
-        const userMessage = String(body.message || "").trim();
+
+        const userMessage = String(
+          body.message || ""
+        ).trim();
 
         if (!userMessage) {
           return json({
-            error: "Пустое сообщение"
+            error: "Пустое сообщение."
           }, 400);
         }
 
-        /*
-        ==========================================
-        1. ЗАГРУЖАЕМ ДОЛГОВРЕМЕННУЮ ПАМЯТЬ
-        ==========================================
-        */
+        // ==============================
+        // 1. LONG-TERM MEMORY
+        // ==============================
 
         const factsResult = await env.DB.prepare(`
           SELECT id, category, fact
@@ -42,11 +51,18 @@ export default {
 
         const facts = factsResult.results || [];
 
-        /*
-        ==========================================
-        2. ЗАГРУЖАЕМ НЕДАВНИЙ ДИАЛОГ
-        ==========================================
-        */
+        const memoryContext = facts.length
+          ? facts
+              .map(item =>
+                factToNaturalSentence(item.fact)
+              )
+              .filter(Boolean)
+              .join("\n")
+          : "Сохранённых сведений нет.";
+
+        // ==============================
+        // 2. RECENT CONVERSATION
+        // ==============================
 
         const memoryResult = await env.DB.prepare(`
           SELECT role, content
@@ -58,266 +74,258 @@ export default {
           .bind(USER_ID)
           .all();
 
-        const recentMemory = (memoryResult.results || []).reverse();
+        const recentMemory =
+          (memoryResult.results || []).reverse();
 
-        /*
-        ==========================================
-        3. ОПРЕДЕЛЯЕМ, НУЖЕН ЛИ ИНТЕРНЕТ
-        ==========================================
-        */
+        // ==============================
+        // 3. WEB SEARCH DECISION
+        // ==============================
 
-        const searchDecision = shouldSearchWeb(userMessage);
+        const searchDecision =
+          shouldSearchWeb(userMessage);
 
         let webResults = [];
-        let webContext = "";
 
         if (searchDecision.search) {
           webResults = await searchWeb(
-            searchDecision.query,
-            env
+            searchDecision.query
           );
-
-          webContext = buildWebContext(webResults);
         }
 
-        /*
-        ==========================================
-        4. ФОРМИРУЕМ КОНТЕКСТ ПАМЯТИ
-        ==========================================
-        */
+        const webContext =
+          buildWebContext(webResults);
 
-        const memoryContext = facts.length
-          ? facts
-              .map((item) => factToNaturalSentence(item.fact))
-              .join("\n")
-          : "Дополнительных сохранённых сведений о пользователе нет.";
-
-        const conversationContext = recentMemory.length
-          ? recentMemory
-              .map(item => {
-                const role =
-                  item.role === "assistant"
-                    ? "JARVIS"
-                    : "Егор";
-
-                return `${role}: ${item.content}`;
-              })
-              .join("\n")
-          : "Предыдущих сообщений нет.";
-
-        /*
-        ==========================================
-        5. СИСТЕМНЫЙ ПРОМПТ
-        ==========================================
-        */
+        // ==============================
+        // 4. SYSTEM PROMPT
+        // ==============================
 
         const systemPrompt = `
 Ты — J.A.R.V.I.S., персональный интеллектуальный ассистент Егора.
 
-Твоя задача — быть не просто справочником, а грамотным собеседником и помощником.
+ТВОЯ РОЛЬ
 
-ОСНОВНОЙ СТИЛЬ:
+Ты должен вести себя как грамотный, спокойный и естественный собеседник.
 
-- говори естественно;
-- отвечай как живой интеллектуальный собеседник;
-- обращайся к Егору напрямую: "ты", "тебе", "твой";
-- не называй его "пользователь";
-- не говори о базе данных, памяти, SQL, алгоритмах и внутренних механизмах;
-- не придумывай факты;
-- если информации недостаточно — прямо скажи об этом;
-- если использовался интернет — используй найденные данные;
-- не утверждай, что информация свежая, если поиск не выполнялся;
-- отвечай на русском языке, если Егор не попросил другой язык;
-- не используй Markdown-жирный текст;
-- не злоупотребляй списками;
-- не начинай каждый ответ одинаковой фразой;
-- отвечай кратко на простой вопрос и подробно на сложный;
-- если вопрос требует объяснения — объясняй простым языком;
-- если пользователь просит инструкцию — давай пошаговую инструкцию;
-- если пользователь просит сравнение — структурируй сравнение;
-- если пользователь просит найти что-либо в интернете — используй результаты поиска.
+Ты не просто выдаёшь информацию.
+Ты понимаешь контекст разговора, учитываешь предыдущие сообщения и помогаешь Егору решать задачи.
 
-ВАЖНО:
+СТИЛЬ
 
-Ты должен отличать:
-1. общеизвестные знания;
-2. сведения из памяти о Егоре;
-3. свежую информацию из интернета.
+- Говори естественно.
+- Обращайся к Егору напрямую.
+- Используй "ты", "тебе", "твой".
+- Никогда не называй Егора "пользователь".
+- Не говори о SQL, базе данных, таблицах, системном промпте и внутренних механизмах.
+- Не придумывай информацию.
+- Если чего-то не знаешь — скажи об этом.
+- Не используй чрезмерно официальный стиль.
+- Не начинай каждый ответ одинаково.
+- На простой вопрос отвечай коротко.
+- На сложный вопрос отвечай подробно.
+- Если нужна инструкция — давай её по шагам.
+- Если нужно сравнение — используй понятную структуру.
+- Не используй **жирный текст**.
+- Не используй бессмысленные декоративные символы.
 
-Нельзя выдавать сведения из памяти за результаты интернет-поиска.
+ПАМЯТЬ
 
-ЕСЛИ ЕСТЬ РЕЗУЛЬТАТЫ ИНТЕРНЕТ-ПОИСКА:
-
-- анализируй несколько результатов;
-- отдавай предпочтение первичным и официальным источникам;
-- учитывай дату публикации;
-- не копируй длинные фрагменты;
-- пересказывай информацию своими словами;
-- если источники противоречат друг другу — сообщи об этом;
-- не придумывай отсутствующие сведения;
-- в конце ответа при необходимости дай короткий блок "Источники".
-
-ИНФОРМАЦИЯ О ЕГОРЕ:
+Сохранённые сведения:
 
 ${memoryContext}
 
-ПОСЛЕДНЯЯ ИСТОРИЯ ДИАЛОГА:
+Используй их естественно.
 
-${conversationContext}
+Например:
 
-ИНФОРМАЦИЯ, ПОЛУЧЕННАЯ ИЗ ИНТЕРНЕТА:
+Плохо:
+"В базе данных указано, что пользователь любит зелёный чай."
 
-${webContext || "Интернет-поиск для этого сообщения не выполнялся."}
+Хорошо:
+"Ты любишь зелёный чай."
+
+ИНТЕРНЕТ
+
+Если ниже присутствуют результаты поиска, считай их свежими внешними источниками.
+
+Используй их для ответа.
+
+Важно:
+
+- Не выдумывай сведения, которых нет в результатах.
+- Сравнивай несколько источников, если они доступны.
+- Приоритет отдавай официальным сайтам и первичным источникам.
+- Обращай внимание на дату.
+- Если источники противоречат друг другу — скажи об этом.
+- Не выдавай старую информацию за текущую.
+- Если вопрос касается текущих событий, цен, новостей, людей, компаний, технологий или расписаний — используй результаты поиска.
+- Не копируй большие фрагменты источников.
+- Пересказывай информацию своими словами.
+
+Если поиск не дал результатов, честно скажи, что найти подтверждённую свежую информацию не удалось.
+
+РЕЗУЛЬТАТЫ ИНТЕРНЕТ-ПОИСКА:
+
+${webContext}
+
+ТЕКУЩИЙ ДИАЛОГ:
+
+${recentMemory
+  .map(item =>
+    `${item.role === "assistant" ? "JARVIS" : "Егор"}: ${item.content}`
+  )
+  .join("\n")}
+
+Отвечай на последнее сообщение Егора.
 `;
 
-        /*
-        ==========================================
-        6. ОТПРАВЛЯЕМ ЗАПРОС В AI
-        ==========================================
-        */
+        // ==============================
+        // 5. AI
+        // ==============================
 
         const messages = [
           {
             role: "system",
             content: systemPrompt
           },
+
           ...recentMemory.map(item => ({
             role:
               item.role === "assistant"
                 ? "assistant"
                 : "user",
+
             content: item.content
           })),
+
           {
             role: "user",
             content: userMessage
           }
         ];
 
-        const aiResponse = await env.AI.run(
-          MODEL,
-          {
-            messages
-          }
-        );
+        const aiResponse =
+          await env.AI.run(
+            MODEL,
+            {
+              messages
+            }
+          );
 
         let answer =
           aiResponse?.choices?.[0]?.message?.content ||
-          "Не удалось получить ответ.";
+          "Не удалось сформировать ответ.";
 
-        answer = cleanAssistantText(answer);
+        answer =
+          cleanAssistantText(answer);
 
-        /*
-        ==========================================
-        7. СОХРАНЯЕМ ДИАЛОГ
-        ==========================================
-        */
+        // ==============================
+        // 6. SAVE CONVERSATION
+        // ==============================
 
         await env.DB.prepare(`
-          INSERT INTO memory (user_id, role, content)
+          INSERT INTO memory
+          (user_id, role, content)
           VALUES (?, ?, ?)
         `)
-          .bind(USER_ID, "user", userMessage)
+          .bind(
+            USER_ID,
+            "user",
+            userMessage
+          )
           .run();
 
         await env.DB.prepare(`
-          INSERT INTO memory (user_id, role, content)
+          INSERT INTO memory
+          (user_id, role, content)
           VALUES (?, ?, ?)
         `)
-          .bind(USER_ID, "assistant", answer)
+          .bind(
+            USER_ID,
+            "assistant",
+            answer
+          )
           .run();
 
-        /*
-        ==========================================
-        8. ВОЗВРАЩАЕМ ОТВЕТ
-        ==========================================
-        */
+        // ==============================
+        // 7. RESPONSE
+        // ==============================
 
         return json({
           answer,
-          webSearch: searchDecision.search,
-          sources: webResults.map(item => ({
-            title: item.title,
-            url: item.url
-          }))
+
+          webSearch:
+            searchDecision.search,
+
+          sources:
+            webResults.map(item => ({
+              title: item.title,
+              url: item.url
+            }))
         });
 
       } catch (error) {
         console.error(error);
 
         return json({
-          error: "Произошла ошибка при обработке запроса.",
-          details: error?.message || String(error)
+          error:
+            "Произошла ошибка при обработке запроса.",
+          details:
+            error?.message ||
+            String(error)
         }, 500);
       }
     }
 
-    return new Response("Not Found", {
-      status: 404
-    });
+    return new Response(
+      "Not Found",
+      {
+        status: 404
+      }
+    );
   }
 };
 
 
-/*
-==================================================
-WEB SEARCH
-==================================================
-*/
+// =====================================================
+// WEB SEARCH WITHOUT API
+// DuckDuckGo HTML
+// =====================================================
 
-async function searchWeb(query, env) {
-  if (!env.BRAVE_API_KEY) {
-    return [];
-  }
-
-  const url = new URL(
-    "https://api.search.brave.com/res/v1/web/search"
-  );
-
-  url.searchParams.set("q", query);
-  url.searchParams.set("count", "8");
-  url.searchParams.set("search_lang", "ru");
-  url.searchParams.set("ui_lang", "ru-RU");
-  url.searchParams.set("country", "DE");
-
+async function searchWeb(query) {
   try {
-    const response = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        "Accept": "application/json",
-        "X-Subscription-Token": env.BRAVE_API_KEY
-      }
-    });
+    const url =
+      "https://html.duckduckgo.com/html/?q=" +
+      encodeURIComponent(query);
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (compatible; JARVIS/1.0)",
+          "Accept":
+            "text/html,application/xhtml+xml"
+        }
+      });
 
     if (!response.ok) {
       console.error(
-        "Brave Search error:",
+        "Search HTTP error:",
         response.status
       );
 
       return [];
     }
 
-    const data = await response.json();
+    const html =
+      await response.text();
 
-    const results =
-      data?.web?.results ||
-      [];
-
-    return results
-      .slice(0, 8)
-      .map(item => ({
-        title: item.title || "",
-        description: item.description || "",
-        url: item.url || "",
-        age: item.age || "",
-        published: item.published || ""
-      }))
-      .filter(item => item.url);
+    return parseDuckDuckGoResults(html);
 
   } catch (error) {
     console.error(
-      "Web search failed:",
+      "Search error:",
       error
     );
 
@@ -326,20 +334,127 @@ async function searchWeb(query, env) {
 }
 
 
-/*
-==================================================
-ОПРЕДЕЛЕНИЕ НЕОБХОДИМОСТИ ПОИСКА
-==================================================
-*/
+// =====================================================
+// PARSE SEARCH RESULTS
+// =====================================================
 
-function shouldSearchWeb(message) {
-  const text = message.toLowerCase().trim();
+function parseDuckDuckGoResults(html) {
+  const results = [];
 
   /*
-  Явный запрос на интернет
+   DuckDuckGo HTML обычно содержит:
+
+   result__a
+   result__snippet
   */
 
+  const resultBlocks =
+    html.match(
+      /<div[^>]+class="[^"]*result[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi
+    ) || [];
+
+  for (
+    const block of resultBlocks
+  ) {
+
+    if (results.length >= 8) {
+      break;
+    }
+
+    const titleMatch =
+      block.match(
+        /<a[^>]+class="[^"]*result__a[^"]*"[^>]*>([\s\S]*?)<\/a>/i
+      );
+
+    if (!titleMatch) {
+      continue;
+    }
+
+    const hrefMatch =
+      titleMatch[0].match(
+        /href="([^"]+)"/i
+      );
+
+    if (!hrefMatch) {
+      continue;
+    }
+
+    let title =
+      stripHtml(
+        titleMatch[1]
+      );
+
+    let url =
+      decodeHtml(
+        hrefMatch[1]
+      );
+
+    const snippetMatch =
+      block.match(
+        /class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/(?:a|div)>/i
+      );
+
+    let description =
+      snippetMatch
+        ? stripHtml(snippetMatch[1])
+        : "";
+
+    /*
+     DuckDuckGo иногда использует
+     redirect URLs.
+
+     Пытаемся извлечь настоящий URL.
+    */
+
+    try {
+
+      const parsed =
+        new URL(url);
+
+      const uddg =
+        parsed.searchParams.get(
+          "uddg"
+        );
+
+      if (uddg) {
+        url =
+          decodeURIComponent(uddg);
+      }
+
+    } catch (_) {}
+
+    if (
+      !url.startsWith("http")
+    ) {
+      continue;
+    }
+
+    results.push({
+      title,
+      description,
+      url
+    });
+  }
+
+  return results;
+}
+
+
+// =====================================================
+// SEARCH DECISION
+// =====================================================
+
+function shouldSearchWeb(message) {
+
+  const text =
+    String(message || "")
+      .toLowerCase()
+      .trim();
+
+  // Явный поиск
+
   const explicitPatterns = [
+
     "найди в интернете",
     "поищи в интернете",
     "поищи в сети",
@@ -348,34 +463,33 @@ function shouldSearchWeb(message) {
     "посмотри в интернете",
     "проверь в интернете",
     "проверь информацию",
-    "найди последние",
-    "последние новости",
-    "что нового",
-    "актуальная информация",
-    "актуальные данные",
-    "свежие новости",
-    "свежая информация",
-    "найди новости",
+    "поищи",
     "погугли",
-    "поищи"
+    "найди мне",
+    "найди последние",
+    "найди новости"
+
   ];
 
   if (
-    explicitPatterns.some(pattern =>
-      text.includes(pattern)
+    explicitPatterns.some(
+      pattern =>
+        text.includes(pattern)
     )
   ) {
+
     return {
       search: true,
-      query: cleanSearchQuery(message)
+      query:
+        cleanSearchQuery(message)
     };
   }
 
-  /*
-  Текущие события
-  */
+
+  // Новости и текущая информация
 
   const currentPatterns = [
+
     "сегодня",
     "сейчас",
     "на данный момент",
@@ -383,65 +497,92 @@ function shouldSearchWeb(message) {
     "на сегодня",
     "на завтра",
     "вчера",
-    "последний",
-    "последняя",
-    "последние",
-    "новости",
-    "текущая",
-    "текущий",
-    "актуальный",
-    "актуальная",
-    "актуальные",
-    "сколько стоит",
-    "цена сейчас",
-    "курс",
-    "котировки"
-  ];
-
-  if (
-    currentPatterns.some(pattern =>
-      text.includes(pattern)
-    )
-  ) {
-    return {
-      search: true,
-      query: cleanSearchQuery(message)
-    };
-  }
-
-  /*
-  Имена людей + текущая информация
-  */
-
-  const dynamicPatterns = [
-    "кто сейчас",
-    "где сейчас",
-    "чем сейчас занимается",
-    "что сейчас происходит",
+    "последние новости",
+    "свежие новости",
+    "свежая информация",
+    "актуальная информация",
+    "актуальные данные",
+    "что нового",
     "что произошло",
     "что случилось",
-    "последний фильм",
-    "новый фильм",
-    "новый альбом",
-    "новая модель",
-    "новая версия"
+    "кто сейчас",
+    "где сейчас",
+    "чем сейчас занимается"
+
   ];
 
   if (
-    dynamicPatterns.some(pattern =>
-      text.includes(pattern)
+    currentPatterns.some(
+      pattern =>
+        text.includes(pattern)
     )
   ) {
+
     return {
       search: true,
-      query: cleanSearchQuery(message)
+      query:
+        cleanSearchQuery(message)
     };
   }
 
-  /*
-  Во всех остальных случаях
-  считаем, что интернет не нужен.
-  */
+
+  // Цены и динамические данные
+
+  const pricePatterns = [
+
+    "сколько стоит",
+    "цена сейчас",
+    "какая цена",
+    "курс",
+    "котировки",
+    "стоимость сейчас",
+    "сколько сейчас стоит"
+
+  ];
+
+  if (
+    pricePatterns.some(
+      pattern =>
+        text.includes(pattern)
+    )
+  ) {
+
+    return {
+      search: true,
+      query:
+        cleanSearchQuery(message)
+    };
+  }
+
+
+  // Технологии
+
+  const technologyPatterns = [
+
+    "последняя версия",
+    "новая версия",
+    "последнее обновление",
+    "новая модель",
+    "новый iphone",
+    "новый samsung",
+    "новый macbook"
+
+  ];
+
+  if (
+    technologyPatterns.some(
+      pattern =>
+        text.includes(pattern)
+    )
+  ) {
+
+    return {
+      search: true,
+      query:
+        cleanSearchQuery(message)
+    };
+  }
+
 
   return {
     search: false,
@@ -450,39 +591,53 @@ function shouldSearchWeb(message) {
 }
 
 
-/*
-==================================================
-ОЧИСТКА ПОИСКОВОГО ЗАПРОСА
-==================================================
-*/
+// =====================================================
+// SEARCH QUERY CLEANING
+// =====================================================
 
 function cleanSearchQuery(message) {
-  let query = String(message || "").trim();
 
-  query = query
-    .replace(/^джарвис[,\s]*/i, "")
-    .replace(/^джарвис[,\s]+/i, "")
-    .trim();
+  let query =
+    String(message || "")
+      .trim();
 
-  return query.slice(0, 600);
+  query =
+    query.replace(
+      /^джарвис[,\s]*/i,
+      ""
+    );
+
+  query =
+    query.replace(
+      /^(найди|поищи|посмотри|проверь)\s+(в интернете|в сети)?\s*/i,
+      ""
+    );
+
+  return query
+    .trim()
+    .slice(0, 500);
 }
 
 
-/*
-==================================================
-ФОРМИРОВАНИЕ КОНТЕКСТА ИЗ ПОИСКА
-==================================================
-*/
+// =====================================================
+// WEB CONTEXT
+// =====================================================
 
 function buildWebContext(results) {
+
   if (!results.length) {
-    return "Поиск в интернете не вернул результатов.";
+
+    return `
+Интернет-поиск выполнялся,
+но подходящих результатов
+не найдено.
+`;
   }
 
   return results
-    .map((item, index) => {
-      return `
-Источник ${index + 1}
+    .map(
+      (item, index) => `
+ИСТОЧНИК ${index + 1}
 
 Название:
 ${item.title}
@@ -490,88 +645,106 @@ ${item.title}
 Описание:
 ${item.description}
 
-Дата:
-${item.published || item.age || "не указана"}
-
-URL:
+Адрес:
 ${item.url}
-`;
-    })
-    .join("\n----------------------\n");
+`
+    )
+    .join(
+      "\n----------------------\n"
+    );
 }
 
 
-/*
-==================================================
-ПРЕОБРАЗОВАНИЕ ФАКТОВ В ЕСТЕСТВЕННЫЙ ЯЗЫК
-==================================================
-*/
+// =====================================================
+// MEMORY NATURAL LANGUAGE
+// =====================================================
 
 function factToNaturalSentence(text) {
-  let result = String(text || "").trim();
 
-  result = result.replace(
-    /^что\s+я\s+/i,
-    ""
-  );
+  let result =
+    String(text || "")
+      .trim();
 
-  result = result.replace(
-    /^я\s+/i,
-    ""
-  );
+  result =
+    result.replace(
+      /^что\s+я\s+/i,
+      ""
+    );
 
-  result = result.replace(
-    /[.]+$/,
-    ""
-  );
+  result =
+    result.replace(
+      /^я\s+/i,
+      ""
+    );
+
+  result =
+    result.replace(
+      /[.]+$/,
+      ""
+    );
 
   if (!result) {
     return "";
   }
 
   if (
-    /^(ты|тебе|твой|твоя|твои|твое|твоё)\b/i.test(result)
+    /^(ты|тебе|твой|твоя|твои|твое|твоё)\b/i
+      .test(result)
   ) {
     return capitalizeFirst(result);
   }
 
-  if (/^люблю\s+/i.test(result)) {
+  if (
+    /^люблю\s+/i.test(result)
+  ) {
     return capitalizeFirst(
       "Ты " + result
     );
   }
 
-  if (/^нравится\s+/i.test(result)) {
+  if (
+    /^нравится\s+/i.test(result)
+  ) {
     return capitalizeFirst(
       "Тебе " + result
     );
   }
 
-  if (/^предпочитаю\s+/i.test(result)) {
+  if (
+    /^предпочитаю\s+/i.test(result)
+  ) {
     return capitalizeFirst(
       "Ты " + result
     );
   }
 
-  if (/^учусь\s+/i.test(result)) {
+  if (
+    /^учусь\s+/i.test(result)
+  ) {
     return capitalizeFirst(
       "Ты " + result
     );
   }
 
-  if (/^работаю\s+/i.test(result)) {
+  if (
+    /^работаю\s+/i.test(result)
+  ) {
     return capitalizeFirst(
       "Ты " + result
     );
   }
 
-  if (/^занимаюсь\s+/i.test(result)) {
+  if (
+    /^занимаюсь\s+/i.test(result)
+  ) {
     return capitalizeFirst(
       "Ты " + result
     );
   }
 
-  if (/^пользуюсь\s+/i.test(result)) {
+  if (
+    /^пользуюсь\s+/i.test(result)
+  ) {
     return capitalizeFirst(
       "Ты " + result
     );
@@ -581,42 +754,103 @@ function factToNaturalSentence(text) {
 }
 
 
-/*
-==================================================
-НОРМАЛИЗАЦИЯ ТЕКСТА
-==================================================
-*/
+// =====================================================
+// CLEAN AI TEXT
+// =====================================================
 
 function cleanAssistantText(text) {
-  let result = String(text || "");
 
-  result = result.replace(
-    /\*\*(.*?)\*\*/g,
-    "$1"
-  );
+  let result =
+    String(text || "");
 
-  result = result.replace(
-    /(?<!\w)\*(?!\w)/g,
-    ""
-  );
+  result =
+    result.replace(
+      /\*\*(.*?)\*\*/g,
+      "$1"
+    );
 
-  result = result.replace(
-    /\n{3,}/g,
-    "\n\n"
-  );
+  result =
+    result.replace(
+      /(?<!\w)\*(?!\w)/g,
+      ""
+    );
 
-  result = result.replace(
-    /\s+([,.!?;:])/g,
-    "$1"
-  );
+  result =
+    result.replace(
+      /\n{3,}/g,
+      "\n\n"
+    );
+
+  result =
+    result.replace(
+      /\s+([,.!?;:])/g,
+      "$1"
+    );
 
   return result.trim();
 }
 
 
+// =====================================================
+// HTML HELPERS
+// =====================================================
+
+function stripHtml(text) {
+
+  return decodeHtml(
+    String(text || "")
+      .replace(
+        /<[^>]*>/g,
+        " "
+      )
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .trim()
+  );
+}
+
+
+function decodeHtml(text) {
+
+  return String(text || "")
+    .replace(
+      /&amp;/g,
+      "&"
+    )
+    .replace(
+      /&quot;/g,
+      '"'
+    )
+    .replace(
+      /&#39;/g,
+      "'"
+    )
+    .replace(
+      /&lt;/g,
+      "<"
+    )
+    .replace(
+      /&gt;/g,
+      ">"
+    )
+    .replace(
+      /&#x27;/gi,
+      "'"
+    )
+    .replace(
+      /&#x2F;/gi,
+      "/"
+    );
+}
+
+
 function capitalizeFirst(text) {
+
   const value =
-    String(text || "").trim();
+    String(text || "")
+      .trim();
 
   if (!value) {
     return value;
@@ -629,17 +863,20 @@ function capitalizeFirst(text) {
 }
 
 
-/*
-==================================================
-JSON RESPONSE
-==================================================
-*/
+// =====================================================
+// JSON
+// =====================================================
 
-function json(data, status = 200) {
+function json(
+  data,
+  status = 200
+) {
+
   return new Response(
     JSON.stringify(data),
     {
       status,
+
       headers: {
         "content-type":
           "application/json; charset=UTF-8"
@@ -649,11 +886,9 @@ function json(data, status = 200) {
 }
 
 
-/*
-==================================================
-WEB INTERFACE
-==================================================
-*/
+// =====================================================
+// WEB UI
+// =====================================================
 
 const HTML = `
 <!DOCTYPE html>
@@ -678,7 +913,9 @@ const HTML = `
 }
 
 body {
+
   margin: 0;
+
   background:
     radial-gradient(
       circle at top,
@@ -698,109 +935,176 @@ body {
   min-height: 100vh;
 
   display: flex;
+
   justify-content: center;
 }
 
 .container {
+
   width: 100%;
+
   max-width: 850px;
-  padding: 24px 16px;
+
+  padding:
+    24px 16px;
 }
 
 .header {
+
   text-align: center;
+
   margin-bottom: 24px;
 }
 
 .logo {
+
   font-size: 30px;
+
   letter-spacing: 5px;
+
   font-weight: 600;
 }
 
 .status {
+
   margin-top: 7px;
+
   font-size: 13px;
+
   opacity: .6;
 }
 
 .chat {
+
   display: flex;
+
   flex-direction: column;
+
   gap: 12px;
+
   padding-bottom: 120px;
 }
 
 .message {
-  padding: 14px 16px;
+
+  padding:
+    14px 16px;
+
   border-radius: 16px;
+
   line-height: 1.55;
+
   white-space: pre-wrap;
 }
 
 .user {
+
   align-self: flex-end;
+
   max-width: 85%;
+
   background: #263449;
 }
 
 .assistant {
+
   align-self: flex-start;
+
   max-width: 92%;
-  background: rgba(255,255,255,.07);
+
+  background:
+    rgba(255,255,255,.07);
 }
 
 .input-area {
+
   position: fixed;
+
   bottom: 0;
+
   left: 0;
+
   right: 0;
+
   padding: 12px;
-  background: rgba(3,5,8,.92);
-  backdrop-filter: blur(18px);
+
+  background:
+    rgba(3,5,8,.92);
+
+  backdrop-filter:
+    blur(18px);
 }
 
 .input-box {
+
   max-width: 850px;
+
   margin: auto;
+
   display: flex;
+
   gap: 8px;
 }
 
 input {
+
   flex: 1;
+
   border: none;
+
   outline: none;
+
   border-radius: 14px;
+
   padding: 15px;
+
   font-size: 16px;
+
   background: #171e2b;
+
   color: white;
 }
 
 button {
+
   border: none;
+
   border-radius: 14px;
-  padding: 0 20px;
+
+  padding:
+    0 20px;
+
   font-size: 16px;
+
   background: #30435e;
+
   color: white;
 }
 
 button:active {
-  transform: scale(.97);
+
+  transform:
+    scale(.97);
 }
 
 .sources {
-  margin-top: 10px;
+
+  margin-top: 12px;
+
   font-size: 12px;
+
   opacity: .7;
 }
 
 .sources a {
+
   color: #9dbbe8;
+
   display: block;
-  margin-top: 4px;
+
+  margin-top: 5px;
+
+  text-decoration: none;
 }
 
 </style>
@@ -850,14 +1154,17 @@ button:active {
 
 </div>
 
-
 <script>
 
 const input =
-  document.getElementById("message");
+  document.getElementById(
+    "message"
+  );
 
 const chat =
-  document.getElementById("chat");
+  document.getElementById(
+    "chat"
+  );
 
 
 function addMessage(
@@ -867,7 +1174,9 @@ function addMessage(
 ) {
 
   const message =
-    document.createElement("div");
+    document.createElement(
+      "div"
+    );
 
   message.className =
     "message " + type;
@@ -881,7 +1190,9 @@ function addMessage(
   ) {
 
     const sourceBlock =
-      document.createElement("div");
+      document.createElement(
+        "div"
+      );
 
     sourceBlock.className =
       "sources";
@@ -889,38 +1200,47 @@ function addMessage(
     sourceBlock.textContent =
       "Источники:";
 
-    sources.forEach(source => {
+    sources.forEach(
+      source => {
 
-      const link =
-        document.createElement("a");
+        const link =
+          document.createElement(
+            "a"
+          );
 
-      link.href =
-        source.url;
+        link.href =
+          source.url;
 
-      link.target =
-        "_blank";
+        link.target =
+          "_blank";
 
-      link.rel =
-        "noopener noreferrer";
+        link.rel =
+          "noopener noreferrer";
 
-      link.textContent =
-        source.title ||
-        source.url;
+        link.textContent =
+          source.title ||
+          source.url;
 
-      sourceBlock.appendChild(link);
-
-    });
+        sourceBlock.appendChild(
+          link
+        );
+      }
+    );
 
     message.appendChild(
       sourceBlock
     );
   }
 
-  chat.appendChild(message);
+  chat.appendChild(
+    message
+  );
 
   window.scrollTo({
-    top: document.body.scrollHeight,
-    behavior: "smooth"
+    top:
+      document.body.scrollHeight,
+    behavior:
+      "smooth"
   });
 }
 
@@ -942,7 +1262,9 @@ async function sendMessage() {
   input.value = "";
 
   const loading =
-    document.createElement("div");
+    document.createElement(
+      "div"
+    );
 
   loading.className =
     "message assistant";
@@ -970,9 +1292,10 @@ async function sendMessage() {
               "application/json"
           },
 
-          body: JSON.stringify({
-            message: text
-          })
+          body:
+            JSON.stringify({
+              message: text
+            })
         }
       );
 
