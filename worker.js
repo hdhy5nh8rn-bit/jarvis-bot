@@ -523,13 +523,61 @@ input.addEventListener("keydown", function(event) {
 
 
         // =========================
-        // FORGET MEMORY
-        // =========================
-        if (
-          lowerMessage.includes("забудь") ||
-          lowerMessage.includes("удали из памяти") ||
-          lowerMessage.includes("не запоминай")
-        ) {
+// FORGET MEMORY
+// =========================
+if (
+  lowerMessage.includes("забудь") ||
+  lowerMessage.includes("удали из памяти") ||
+  lowerMessage.includes("не запоминай")
+) {
+
+  let searchText = userMessage
+    .replace(
+      /^.*?(забудь|удали из памяти|не запоминай)\s*/i,
+      ""
+    )
+    .trim();
+
+  if (searchText) {
+
+    const allFactsResult = await env.DB.prepare(`
+      SELECT id, fact
+      FROM facts
+      WHERE user_id = ?
+      ORDER BY id ASC
+    `)
+    .bind(userId)
+    .all();
+
+    const allFacts = allFactsResult.results || [];
+
+    const normalizedSearch = searchText.toLowerCase();
+
+    for (const item of allFacts) {
+
+      const normalizedFact =
+        String(item.fact).toLowerCase();
+
+      if (
+        normalizedFact.includes(normalizedSearch) ||
+        normalizedSearch.includes(normalizedFact)
+      ) {
+
+        await env.DB.prepare(`
+          DELETE FROM facts
+          WHERE id = ?
+          AND user_id = ?
+        `)
+        .bind(item.id, userId)
+        .run();
+
+      }
+
+    }
+
+  }
+
+}
 
           let searchText = userMessage
             .replace(/^.*?(забудь|удали из памяти|не запоминай)\s*/i, "")
