@@ -4,5 +4,12 @@
   "compatibility_date": "2026-09-15",
   "ai": {
     "binding": "AI"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jarvis-memory",
+      "database_id": "bf65c48b-e792-40c3-9af2-a96c4fbb35ef"
+    }
+  ]
 }
