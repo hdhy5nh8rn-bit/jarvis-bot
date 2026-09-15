@@ -3,6 +3,7 @@ export default {
     try {
       const url = new URL(request.url);
 
+    
       // Веб-интерфейс
       if (url.pathname === "/") {
   const html = `
