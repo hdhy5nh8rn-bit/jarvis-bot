@@ -8,282 +8,534 @@ const MAX_SEARCH_RESULTS = 5;
 
 
 // ============================================================
-// ОСНОВНОЙ WORKER
+// WORKER
 // ============================================================
 
 export default {
+
   async fetch(request, env, ctx) {
+
     const url = new URL(request.url);
 
     try {
 
-      // --------------------------------------------------------
-      // Главная страница
-      // --------------------------------------------------------
+      // ========================================================
+      // ГЛАВНАЯ СТРАНИЦА
+      // ========================================================
 
-      if (request.method === "GET" && url.pathname === "/") {
-        return new Response(getHTML(), {
-          status: 200,
-          headers: {
-            "Content-Type": "text/html; charset=UTF-8",
-            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0"
+      if (
+        request.method === "GET" &&
+        url.pathname === "/"
+      ) {
+
+        return new Response(
+          getHTML(),
+          {
+            status: 200,
+
+            headers: {
+              "Content-Type":
+                "text/html; charset=UTF-8",
+
+              "Cache-Control":
+                "no-store, no-cache, must-revalidate",
+
+              "Pragma": "no-cache",
+
+              "Expires": "0"
+            }
           }
-        });
+        );
       }
 
 
-      // --------------------------------------------------------
+      // ========================================================
       // PING
-      // --------------------------------------------------------
+      // ========================================================
 
-      if (request.method === "GET" && url.pathname === "/ping") {
+      if (
+        request.method === "GET" &&
+        url.pathname === "/ping"
+      ) {
+
         return json({
+
           ok: true,
-          service: "J.A.R.V.I.S.",
-          message: "Интерфейс и Worker работают.",
-          time: new Date().toISOString()
+
+          service:
+            "J.A.R.V.I.S.",
+
+          message:
+            "Worker работает.",
+
+          time:
+            new Date().toISOString()
+
         });
       }
 
 
-      // --------------------------------------------------------
+      // ========================================================
       // HEALTH
-      // --------------------------------------------------------
+      // ========================================================
 
-      if (request.method === "GET" && url.pathname === "/health") {
+      if (
+        request.method === "GET" &&
+        url.pathname === "/health"
+      ) {
 
         const checks = {
+
           worker: true,
+
           database: false,
+
           ai: false
+
         };
 
+
         let databaseError = null;
+
         let aiError = null;
 
-        // Проверяем D1
+        let aiAnswer = null;
+
+        let aiRaw = null;
+
+
+        // ------------------------------------------------------
+        // DATABASE
+        // ------------------------------------------------------
+
         try {
+
           await env.DB
-            .prepare("SELECT 1 AS ok")
+            .prepare(
+              "SELECT 1 AS ok"
+            )
             .first();
 
           checks.database = true;
+
         } catch (error) {
-          databaseError = error?.message || String(error);
+
+          databaseError =
+            error?.message ||
+            String(error);
+
         }
 
-        // Проверяем Workers AI
+
+        // ------------------------------------------------------
+        // AI
+        // ------------------------------------------------------
+
         try {
-          const result = await env.AI.run(MODEL, {
-            messages: [
+
+          const result =
+            await env.AI.run(
+              MODEL,
               {
-                role: "user",
-                content: "Ответь одним словом: готов"
+
+                messages: [
+
+                  {
+                    role: "system",
+
+                    content:
+                      "Ты тестовый модуль J.A.R.V.I.S. Отвечай кратко."
+                  },
+
+                  {
+                    role: "user",
+
+                    content:
+                      "Ответь одним словом: готов"
+                  }
+
+                ],
+
+                max_tokens: 20,
+
+                temperature: 0
+
               }
-            ],
-            max_tokens: 10
-          });
+            );
 
-          const answer = extractAIText(result);
 
-          if (answer) {
+          aiRaw = result;
+
+
+          aiAnswer =
+            extractAIText(result);
+
+
+          if (aiAnswer) {
+
             checks.ai = true;
+
           } else {
-            aiError = "AI вернул ответ без текста.";
+
+            aiError =
+              "Workers AI вернул ответ, но текст не найден.";
+
           }
 
         } catch (error) {
-          aiError = error?.message || String(error);
+
+          aiError =
+            error?.message ||
+            String(error);
+
         }
 
+
         return json({
-          ok: checks.worker && checks.database && checks.ai,
+
+          ok:
+            checks.worker &&
+            checks.database &&
+            checks.ai,
+
           checks,
+
           databaseError,
+
           aiError,
+
+          aiAnswer,
+
+          aiRaw,
+
           model: MODEL,
-          time: new Date().toISOString()
+
+          time:
+            new Date().toISOString()
+
         });
       }
 
 
-      // --------------------------------------------------------
+      // ========================================================
       // CHAT
-      // --------------------------------------------------------
+      // ========================================================
 
-      if (request.method === "POST" && url.pathname === "/chat") {
+      if (
+        request.method === "POST" &&
+        url.pathname === "/chat"
+      ) {
 
         let body;
 
         try {
-          body = await request.json();
+
+          body =
+            await request.json();
+
         } catch {
-          return json({
-            ok: false,
-            error: "Неверный JSON-запрос."
-          }, 400);
+
+          return json(
+            {
+              ok: false,
+
+              error:
+                "Некорректный JSON."
+            },
+            400
+          );
         }
 
-        const message = String(body?.message || "").trim();
+
+        const message =
+          String(
+            body?.message || ""
+          ).trim();
+
 
         if (!message) {
-          return json({
-            ok: false,
-            error: "Сообщение пустое."
-          }, 400);
+
+          return json(
+            {
+              ok: false,
+
+              error:
+                "Сообщение пустое."
+            },
+            400
+          );
         }
+
 
         try {
 
-          // ====================================================
-          // КОМАНДЫ ПАМЯТИ
-          // ====================================================
+          // ==================================================
+          // ПАМЯТЬ — СОХРАНИТЬ
+          // ==================================================
 
-          // Запомнить
-          if (isRememberCommand(message)) {
+          if (
+            isRememberCommand(message)
+          ) {
 
-            const fact = extractRememberFact(message);
+            const fact =
+              extractRememberFact(
+                message
+              );
+
 
             if (!fact) {
+
               return json({
+
                 ok: true,
-                answer: "Скажи, что именно мне нужно запомнить."
+
+                answer:
+                  "Скажи, что именно мне нужно запомнить."
+
               });
             }
 
-            const normalized = normalizeFact(fact);
 
-            await saveFact(env, USER_ID, "preference", normalized);
-
-            return json({
-              ok: true,
-              answer: "Запомнил. Буду иметь в виду."
-            });
-          }
+            const normalized =
+              normalizeFact(fact);
 
 
-          // Что я люблю / что ты знаешь
-          if (isRecallCommand(message)) {
-
-            const facts = await getFacts(env, USER_ID);
-
-            if (!facts.length) {
-              return json({
-                ok: true,
-                answer: "Пока у меня нет сохранённых фактов о тебе."
-              });
-            }
-
-            const list = facts
-              .map((item, index) => `${index + 1}. ${item.fact}`)
-              .join("\n");
-
-            return json({
-              ok: true,
-              answer: "Вот что я помню:\n" + list
-            });
-          }
-
-
-          // Забудь
-          if (isForgetCommand(message)) {
-
-            const fact = extractForgetFact(message);
-
-            if (!fact) {
-              return json({
-                ok: true,
-                answer: "Уточни, что именно мне забыть."
-              });
-            }
-
-            const deleted = await deleteFact(
+            await saveFact(
               env,
               USER_ID,
-              fact
+              "preference",
+              normalized
             );
 
+
             return json({
+
               ok: true,
-              answer: deleted
-                ? "Хорошо. Я это забыл."
-                : "Я не нашёл такого факта в памяти."
+
+              answer:
+                "Запомнил. Буду иметь в виду."
+
             });
           }
 
 
-          // Очистить предпочтения
-          if (isClearPreferencesCommand(message)) {
+          // ==================================================
+          // ПАМЯТЬ — ПОКАЗАТЬ
+          // ==================================================
 
-            await env.DB
-              .prepare(
-                "DELETE FROM facts WHERE user_id = ? AND category = 'preference'"
-              )
-              .bind(USER_ID)
-              .run();
+          if (
+            isRecallCommand(message)
+          ) {
+
+            const facts =
+              await getFacts(
+                env,
+                USER_ID
+              );
+
+
+            if (!facts.length) {
+
+              return json({
+
+                ok: true,
+
+                answer:
+                  "Пока у меня нет сохранённых фактов о тебе."
+
+              });
+            }
+
+
+            const list =
+              facts
+                .map(
+                  (item, index) =>
+                    `${index + 1}. ${item.fact}`
+                )
+                .join("\n");
+
 
             return json({
+
               ok: true,
-              answer: "Хорошо. Сохранённые предпочтения очищены."
+
+              answer:
+                "Вот что я помню:\n" +
+                list
+
             });
           }
 
 
-          // Полностью очистить память
-          if (isClearMemoryCommand(message)) {
+          // ==================================================
+          // ПАМЯТЬ — ЗАБЫТЬ
+          // ==================================================
 
-            await env.DB
-              .prepare(
-                "DELETE FROM facts WHERE user_id = ?"
-              )
-              .bind(USER_ID)
-              .run();
+          if (
+            isForgetCommand(message)
+          ) {
 
-            await env.DB
-              .prepare(
-                "DELETE FROM memory WHERE user_id = ?"
-              )
-              .bind(USER_ID)
-              .run();
+            const fact =
+              extractForgetFact(
+                message
+              );
+
+
+            if (!fact) {
+
+              return json({
+
+                ok: true,
+
+                answer:
+                  "Уточни, что именно мне забыть."
+
+              });
+            }
+
+
+            const deleted =
+              await deleteFact(
+                env,
+                USER_ID,
+                fact
+              );
+
 
             return json({
+
               ok: true,
-              answer: "Память полностью очищена."
+
+              answer:
+                deleted
+                  ? "Хорошо. Я это забыл."
+                  : "Я не нашёл такого факта в памяти."
+
             });
           }
 
 
-          // ====================================================
+          // ==================================================
+          // ОЧИСТИТЬ ПРЕДПОЧТЕНИЯ
+          // ==================================================
+
+          if (
+            isClearPreferencesCommand(
+              message
+            )
+          ) {
+
+            await env.DB
+              .prepare(
+                `
+                DELETE FROM facts
+                WHERE user_id = ?
+                AND category = 'preference'
+                `
+              )
+              .bind(USER_ID)
+              .run();
+
+
+            return json({
+
+              ok: true,
+
+              answer:
+                "Хорошо. Сохранённые предпочтения очищены."
+
+            });
+          }
+
+
+          // ==================================================
+          // ОЧИСТИТЬ ВСЮ ПАМЯТЬ
+          // ==================================================
+
+          if (
+            isClearMemoryCommand(
+              message
+            )
+          ) {
+
+            await env.DB
+              .prepare(
+                `
+                DELETE FROM facts
+                WHERE user_id = ?
+                `
+              )
+              .bind(USER_ID)
+              .run();
+
+
+            await env.DB
+              .prepare(
+                `
+                DELETE FROM memory
+                WHERE user_id = ?
+                `
+              )
+              .bind(USER_ID)
+              .run();
+
+
+            return json({
+
+              ok: true,
+
+              answer:
+                "Память полностью очищена."
+
+            });
+          }
+
+
+          // ==================================================
           // КОНТЕКСТ
-          // ====================================================
+          // ==================================================
 
-          const facts = await getFacts(env, USER_ID);
-
-          const history = await getHistory(
-            env,
-            USER_ID,
-            MAX_HISTORY
-          );
+          const facts =
+            await getFacts(
+              env,
+              USER_ID
+            );
 
 
-          // ====================================================
-          // ПОИСК В ИНТЕРНЕТЕ
-          // ====================================================
+          const history =
+            await getHistory(
+              env,
+              USER_ID,
+              MAX_HISTORY
+            );
+
+
+          // ==================================================
+          // ИНТЕРНЕТ
+          // ==================================================
 
           let webResults = [];
 
-          if (shouldSearch(message)) {
+
+          if (
+            shouldSearch(message)
+          ) {
+
             try {
-              webResults = await searchDuckDuckGo(
-                message,
-                MAX_SEARCH_RESULTS
-              );
+
+              webResults =
+                await searchDuckDuckGo(
+                  message,
+                  MAX_SEARCH_RESULTS
+                );
+
             } catch (error) {
+
               console.log(
-                "Search error:",
-                error?.message || String(error)
+                "SEARCH ERROR:",
+                error?.message ||
+                String(error)
               );
 
               webResults = [];
@@ -291,52 +543,68 @@ export default {
           }
 
 
-          // ====================================================
-          // СОЗДАЁМ СИСТЕМНЫЙ ПРОМПТ
-          // ====================================================
+          // ==================================================
+          // SYSTEM PROMPT
+          // ==================================================
 
-          const systemPrompt = buildSystemPrompt(
-            facts,
-            history,
-            webResults
-          );
+          const systemPrompt =
+            buildSystemPrompt(
+              facts,
+              history,
+              webResults
+            );
 
 
-          // ====================================================
-          // СОБИРАЕМ MESSAGES
-          // ====================================================
+          // ==================================================
+          // MESSAGES
+          // ==================================================
 
           const messages = [
+
             {
               role: "system",
-              content: systemPrompt
+
+              content:
+                systemPrompt
             }
+
           ];
 
 
-          for (const item of history) {
+          for (
+            const item of history
+          ) {
 
             if (
               item.role === "user" ||
               item.role === "assistant"
             ) {
+
               messages.push({
-                role: item.role,
-                content: item.content
+
+                role:
+                  item.role,
+
+                content:
+                  item.content
+
               });
             }
           }
 
 
           messages.push({
+
             role: "user",
+
             content: message
+
           });
 
 
-          // ====================================================
-          // СОХРАНЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ
-          // ====================================================
+          // ==================================================
+          // СОХРАНЯЕМ СООБЩЕНИЕ
+          // ==================================================
 
           await saveMemory(
             env,
@@ -346,19 +614,20 @@ export default {
           );
 
 
-          // ====================================================
+          // ==================================================
           // AI
-          // ====================================================
+          // ==================================================
 
-          const answer = await askAI(
-            env,
-            messages
-          );
+          const answer =
+            await askAI(
+              env,
+              messages
+            );
 
 
-          // ====================================================
+          // ==================================================
           // СОХРАНЯЕМ ОТВЕТ
-          // ====================================================
+          // ==================================================
 
           await saveMemory(
             env,
@@ -368,78 +637,131 @@ export default {
           );
 
 
-          // ====================================================
+          // ==================================================
           // ОТВЕТ
-          // ====================================================
+          // ==================================================
 
           return json({
+
             ok: true,
+
             answer,
-            sources: webResults.map(item => ({
-              title: item.title,
-              url: item.url
-            }))
+
+            sources:
+              webResults.map(
+                item => ({
+
+                  title:
+                    item.title,
+
+                  url:
+                    item.url
+
+                })
+              )
+
           });
+
 
         } catch (error) {
 
           console.log(
             "CHAT ERROR:",
-            error?.stack || error?.message || String(error)
+            error?.stack ||
+            error?.message ||
+            String(error)
           );
 
-          return json({
-            ok: false,
-            error:
-              error?.message ||
-              "Внутренняя ошибка J.A.R.V.I.S."
-          }, 500);
+
+          return json(
+            {
+
+              ok: false,
+
+              error:
+                error?.message ||
+                "Внутренняя ошибка J.A.R.V.I.S."
+
+            },
+            500
+          );
         }
       }
 
 
-      // --------------------------------------------------------
+      // ========================================================
       // 404
-      // --------------------------------------------------------
+      // ========================================================
 
-      return json({
-        ok: false,
-        error: "Маршрут не найден."
-      }, 404);
+      return json(
+        {
+
+          ok: false,
+
+          error:
+            "Маршрут не найден."
+
+        },
+        404
+      );
 
 
     } catch (error) {
 
       console.log(
         "WORKER ERROR:",
-        error?.stack || error?.message || String(error)
+        error?.stack ||
+        error?.message ||
+        String(error)
       );
 
-      return json({
-        ok: false,
-        error:
-          error?.message ||
-          "Критическая ошибка Worker."
-      }, 500);
+
+      return json(
+        {
+
+          ok: false,
+
+          error:
+            error?.message ||
+            "Критическая ошибка Worker."
+
+        },
+        500
+      );
     }
   }
 };
 
 
 // ============================================================
-// JSON
+// JSON RESPONSE
 // ============================================================
 
-function json(data, status = 200) {
+function json(
+  data,
+  status = 200
+) {
 
   return new Response(
-    JSON.stringify(data),
+
+    JSON.stringify(
+      data
+    ),
+
     {
+
       status,
+
       headers: {
-        "Content-Type": "application/json; charset=UTF-8",
-        "Cache-Control": "no-store"
+
+        "Content-Type":
+          "application/json; charset=UTF-8",
+
+        "Cache-Control":
+          "no-store"
+
       }
+
     }
   );
 }
@@ -449,28 +771,39 @@ function json(data, status = 200) {
 // AI
 // ============================================================
 
-async function askAI(env, messages) {
+async function askAI(
+  env,
+  messages
+) {
 
-  const result = await env.AI.run(
-    MODEL,
-    {
-      messages,
+  const result =
+    await env.AI.run(
+      MODEL,
+      {
 
-      max_tokens: 700,
+        messages,
 
-      temperature: 0.65
-    }
-  );
+        max_tokens: 700,
+
+        temperature: 0.65
+
+      }
+    );
 
 
-  const text = extractAIText(result);
+  const answer =
+    extractAIText(
+      result
+    );
 
-  if (!text) {
+
+  if (!answer) {
 
     console.log(
-      "RAW AI RESULT:",
+      "AI RAW RESULT:",
       JSON.stringify(result)
     );
+
 
     throw new Error(
       "Workers AI не вернул текстовый ответ."
@@ -478,61 +811,244 @@ async function askAI(env, messages) {
   }
 
 
-  return cleanAIAnswer(text);
+  return cleanAIAnswer(
+    answer
+  );
 }
 
 
 // ============================================================
-// ИЗВЛЕЧЕНИЕ ОТВЕТА AI
+// EXTRACT AI TEXT
 // ============================================================
 
-function extractAIText(result) {
+function extractAIText(
+  result
+) {
 
-  if (!result) {
+  if (
+    result === null ||
+    result === undefined
+  ) {
+
     return "";
   }
 
 
-  // Формат response
+  // ----------------------------------------------------------
+  // Строка
+  // ----------------------------------------------------------
+
+  if (
+    typeof result === "string"
+  ) {
+
+    return result.trim();
+  }
+
+
+  // ----------------------------------------------------------
+  // response
+  // ----------------------------------------------------------
+
   if (
     typeof result.response === "string" &&
     result.response.trim()
   ) {
+
     return result.response.trim();
   }
 
 
-  // Формат choices
+  // ----------------------------------------------------------
+  // choices
+  // ----------------------------------------------------------
+
   if (
-    Array.isArray(result.choices) &&
-    result.choices.length
+    Array.isArray(
+      result.choices
+    ) &&
+    result.choices.length > 0
   ) {
 
-    const choice = result.choices[0];
+    const choice =
+      result.choices[0];
+
 
     if (
-      choice?.message?.content &&
-      typeof choice.message.content === "string"
+      choice?.message &&
+      typeof
+        choice.message.content ===
+        "string"
     ) {
-      return choice.message.content.trim();
+
+      return
+        choice.message.content.trim();
     }
 
+
     if (
-      typeof choice?.text === "string" &&
-      choice.text.trim()
+      typeof choice?.text ===
+      "string"
     ) {
-      return choice.text.trim();
+
+      return
+        choice.text.trim();
     }
   }
 
 
-  // Формат text
+  // ----------------------------------------------------------
+  // text
+  // ----------------------------------------------------------
+
   if (
-    typeof result.text === "string" &&
+    typeof result.text ===
+    "string" &&
     result.text.trim()
   ) {
+
     return result.text.trim();
   }
+
+
+  // ----------------------------------------------------------
+  // content
+  // ----------------------------------------------------------
+
+  if (
+    typeof result.content ===
+    "string" &&
+    result.content.trim()
+  ) {
+
+    return result.content.trim();
+  }
+
+
+  // ----------------------------------------------------------
+  // output_text
+  // ----------------------------------------------------------
+
+  if (
+    typeof result.output_text ===
+    "string" &&
+    result.output_text.trim()
+  ) {
+
+    return result.output_text.trim();
+  }
+
+
+  // ----------------------------------------------------------
+  // message.content
+  // ----------------------------------------------------------
+
+  if (
+    result.message &&
+    typeof result.message.content ===
+      "string"
+  ) {
+
+    return
+      result.message.content.trim();
+  }
+
+
+  // ----------------------------------------------------------
+  // content в массиве
+  // ----------------------------------------------------------
+
+  if (
+    Array.isArray(result.content)
+  ) {
+
+    const parts =
+      result.content
+        .map(
+          item => {
+
+            if (
+              typeof item ===
+              "string"
+            ) {
+              return item;
+            }
+
+            if (
+              typeof item?.text ===
+              "string"
+            ) {
+              return item.text;
+            }
+
+            return "";
+          }
+        )
+        .filter(Boolean);
+
+
+    if (parts.length) {
+
+      return parts.join("\n").trim();
+    }
+  }
+
+
+  // ----------------------------------------------------------
+  // output
+  // ----------------------------------------------------------
+
+  if (
+    Array.isArray(result.output)
+  ) {
+
+    const parts =
+      result.output
+        .map(
+          item => {
+
+            if (
+              typeof item ===
+              "string"
+            ) {
+              return item;
+            }
+
+            if (
+              typeof item?.text ===
+              "string"
+            ) {
+              return item.text;
+            }
+
+            if (
+              typeof item?.content ===
+              "string"
+            ) {
+              return item.content;
+            }
+
+            return "";
+          }
+        )
+        .filter(Boolean);
+
+
+    if (parts.length) {
+
+      return parts.join("\n").trim();
+    }
+  }
+
+
+  // ----------------------------------------------------------
+  // Диагностика
+  // ----------------------------------------------------------
+
+  console.log(
+    "UNRECOGNIZED AI RESULT:",
+    JSON.stringify(result)
+  );
 
 
   return "";
@@ -540,21 +1056,31 @@ function extractAIText(result) {
 
 
 // ============================================================
-// ОЧИСТКА AI ОТВЕТА
+// CLEAN AI
 // ============================================================
 
-function cleanAIAnswer(text) {
+function cleanAIAnswer(
+  text
+) {
 
-  let answer = String(text).trim();
+  return String(text)
 
-  answer = answer
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/\r/g, "")
+    .replace(
+      /\*\*(.*?)\*\*/g,
+      "$1"
+    )
+
+    .replace(
+      /__(.*?)__/g,
+      "$1"
+    )
+
+    .replace(
+      /\r/g,
+      ""
+    )
+
     .trim();
-
-
-  return answer;
 }
 
 
@@ -568,100 +1094,98 @@ function buildSystemPrompt(
   webResults
 ) {
 
-  const factsText = facts.length
-    ? facts
-        .map(item => `- ${item.fact}`)
-        .join("\n")
-    : "Нет сохранённых фактов.";
+  const factsText =
+    facts.length
+
+      ? facts
+          .map(
+            item =>
+              `- ${item.fact}`
+          )
+          .join("\n")
+
+      : "Нет сохранённых фактов.";
 
 
-  const webText = webResults.length
-    ? webResults
-        .map(
-          (item, index) =>
-            `${index + 1}. ${item.title}\n${item.url}\n${item.snippet}`
-        )
-        .join("\n\n")
-    : "Интернет-поиск не выполнялся.";
+  const historyText =
+    history.length
+
+      ? history
+          .map(
+            item =>
+              `${item.role}: ${item.content}`
+          )
+          .join("\n")
+
+      : "Истории пока нет.";
+
+
+  const webText =
+    webResults.length
+
+      ? webResults
+          .map(
+            (item, index) =>
+              `${index + 1}. ${item.title}
+${item.url}
+${item.snippet}`
+          )
+          .join("\n\n")
+
+      : "Интернет-поиск не выполнялся.";
 
 
   return `
+
 Ты — J.A.R.V.I.S., персональный интеллектуальный ассистент.
 
-Твоя задача — разговаривать с человеком естественно, грамотно и по-человечески.
+Ты разговариваешь с человеком естественно, грамотно и спокойно.
 
-ОСНОВНЫЕ ПРАВИЛА:
+ТВОЙ СТИЛЬ:
 
-1. Отвечай на русском языке, если человек не попросил другой язык.
+- русский язык;
+- естественный разговор;
+- грамотные формулировки;
+- уверенный тон;
+- без роботизированных фраз;
+- без постоянного "Конечно";
+- без постоянного "Разумеется";
+- без обращения "пользователь";
+- обращайся на "ты";
+- не задавай вопрос в конце каждого ответа;
+- не повторяй одну и ту же формулировку;
+- простые вопросы — короткий ответ;
+- сложные вопросы — подробный ответ;
+- если человек просит решить задачу — решай;
+- если информации недостаточно — скажи об этом;
+- не выдумывай факты;
+- используй контекст предыдущего разговора;
+- используй сохранённую память;
+- если ниже есть результаты интернет-поиска, используй их для актуальной информации.
 
-2. Не говори о человеке как о "пользователе".
-   Обращайся естественно: "ты", "тебе", "твоё".
+ТЫ НЕ ДОЛЖЕН:
 
-3. Не начинай каждый ответ словами:
-   "Конечно",
-   "Разумеется",
-   "Безусловно",
-   "Как J.A.R.V.I.S.".
-
-4. Не повторяй один и тот же стиль ответа.
-
-5. Не задавай вопрос в конце каждого сообщения.
-   Если вопрос действительно нужен — задай его.
-   Если нет — просто дай ответ.
-
-6. Отвечай естественно.
-   Представляй, что разговариваешь с человеком, которого хорошо знаешь.
-
-7. Если человек говорит:
-   "привет",
-   отвечай нормально и кратко.
-
-8. Если человек просит объяснить что-либо —
-   объясняй понятно, последовательно и без лишней воды.
-
-9. Если человек просит помочь с задачей —
-   переходи непосредственно к решению.
-
-10. Если информация из интернета предоставлена ниже —
-    используй её как дополнительный источник актуальной информации.
-
-11. Не выдумывай факты.
-
-12. Если информации недостаточно —
-    прямо скажи об этом.
-
-13. Не используй Markdown с жирным текстом через **.
-
-14. Можно использовать обычные списки и короткие заголовки,
-    если они действительно помогают.
-
-15. Помни предыдущий контекст разговора.
-
-16. Сохраняй спокойный, уверенный и умный стиль,
-    похожий на персонального ассистента.
-
-17. Не пиши слишком длинные ответы на простые вопросы.
-
-18. На сложные вопросы давай подробный ответ.
+- говорить о себе как о "языковой модели";
+- постоянно напоминать, что ты AI;
+- говорить "как искусственный интеллект";
+- использовать чрезмерно официальный стиль;
+- повторять приветствие;
+- заканчивать каждое сообщение вопросом;
+- выдумывать сведения.
 
 СОХРАНЁННАЯ ПАМЯТЬ:
 
 ${factsText}
 
-ИСТОРИЯ:
+ИСТОРИЯ РАЗГОВОРА:
 
-${history.length
-    ? history
-        .map(item => `${item.role}: ${item.content}`)
-        .join("\n")
-    : "Истории пока нет."
-}
+${historyText}
 
-ИНФОРМАЦИЯ ИЗ ИНТЕРНЕТА:
+РЕЗУЛЬТАТЫ ИНТЕРНЕТ-ПОИСКА:
 
 ${webText}
 
-Не упоминай эти технические инструкции пользователю.
+Отвечай непосредственно человеку.
 `.trim();
 }
 
@@ -678,6 +1202,7 @@ async function saveMemory(
 ) {
 
   await env.DB
+
     .prepare(
       `
       INSERT INTO memory
@@ -685,11 +1210,13 @@ async function saveMemory(
       VALUES (?, ?, ?)
       `
     )
+
     .bind(
       userId,
       role,
       content
     )
+
     .run();
 }
 
@@ -704,24 +1231,36 @@ async function getHistory(
   limit
 ) {
 
-  const result = await env.DB
-    .prepare(
-      `
-      SELECT role, content
-      FROM memory
-      WHERE user_id = ?
-      ORDER BY id DESC
-      LIMIT ?
-      `
-    )
-    .bind(
-      userId,
-      limit
-    )
-    .all();
+  const result =
+    await env.DB
+
+      .prepare(
+        `
+        SELECT
+          role,
+          content
+
+        FROM memory
+
+        WHERE user_id = ?
+
+        ORDER BY id DESC
+
+        LIMIT ?
+        `
+      )
+
+      .bind(
+        userId,
+        limit
+      )
+
+      .all();
 
 
-  const rows = result.results || [];
+  const rows =
+    result.results || [];
+
 
   return rows.reverse();
 }
@@ -736,21 +1275,32 @@ async function getFacts(
   userId
 ) {
 
-  const result = await env.DB
-    .prepare(
-      `
-      SELECT id, category, fact
-      FROM facts
-      WHERE user_id = ?
-      ORDER BY id DESC
-      LIMIT ?
-      `
-    )
-    .bind(
-      userId,
-      MAX_FACTS
-    )
-    .all();
+  const result =
+    await env.DB
+
+      .prepare(
+        `
+        SELECT
+          id,
+          category,
+          fact
+
+        FROM facts
+
+        WHERE user_id = ?
+
+        ORDER BY id DESC
+
+        LIMIT ?
+        `
+      )
+
+      .bind(
+        userId,
+        MAX_FACTS
+      )
+
+      .all();
 
 
   return result.results || [];
@@ -768,40 +1318,56 @@ async function saveFact(
   fact
 ) {
 
-  const existing = await env.DB
-    .prepare(
-      `
-      SELECT id
-      FROM facts
-      WHERE user_id = ?
-      AND category = ?
-      AND lower(fact) = lower(?)
-      LIMIT 1
-      `
-    )
-    .bind(
-      userId,
-      category,
-      fact
-    )
-    .first();
+  const existing =
+    await env.DB
+
+      .prepare(
+        `
+        SELECT id
+
+        FROM facts
+
+        WHERE user_id = ?
+
+        AND category = ?
+
+        AND lower(fact) = lower(?)
+
+        LIMIT 1
+        `
+      )
+
+      .bind(
+        userId,
+        category,
+        fact
+      )
+
+      .first();
 
 
   if (existing) {
 
     await env.DB
+
       .prepare(
         `
         UPDATE facts
-        SET fact = ?,
-            updated_at = CURRENT_TIMESTAMP
+
+        SET
+          fact = ?,
+          updated_at =
+            CURRENT_TIMESTAMP
+
         WHERE id = ?
         `
       )
+
       .bind(
         fact,
         existing.id
       )
+
       .run();
 
     return;
@@ -809,18 +1375,22 @@ async function saveFact(
 
 
   await env.DB
+
     .prepare(
       `
       INSERT INTO facts
       (user_id, category, fact)
+
       VALUES (?, ?, ?)
       `
     )
+
     .bind(
       userId,
       category,
       fact
     )
+
     .run();
 }
 
@@ -835,96 +1405,102 @@ async function deleteFact(
   text
 ) {
 
-  const result = await env.DB
-    .prepare(
-      `
-      DELETE FROM facts
-      WHERE user_id = ?
-      AND lower(fact) LIKE lower(?)
-      `
-    )
-    .bind(
-      userId,
-      `%${text}%`
-    )
-    .run();
+  const result =
+    await env.DB
+
+      .prepare(
+        `
+        DELETE FROM facts
+
+        WHERE user_id = ?
+
+        AND lower(fact)
+        LIKE lower(?)
+        `
+      )
+
+      .bind(
+        userId,
+        `%${text}%`
+      )
+
+      .run();
 
 
   return (
-    result.meta?.changes ||
-    0
+    result.meta?.changes || 0
   ) > 0;
 }
 
 
 // ============================================================
-// НОРМАЛИЗАЦИЯ ФАКТА
+// NORMALIZE FACT
 // ============================================================
 
-function normalizeFact(text) {
+function normalizeFact(
+  text
+) {
 
-  let fact = String(text)
-    .trim()
-    .replace(/[.!?]+$/, "")
-    .trim();
+  let fact =
+    String(text)
 
+      .trim()
 
-  // Я люблю чай
-  fact = fact.replace(
-    /^я\s+люблю\s+/i,
-    "Ты любишь "
-  );
+      .replace(
+        /[.!?]+$/,
+        ""
+      )
 
-
-  // Я предпочитаю чай
-  fact = fact.replace(
-    /^я\s+предпочитаю\s+/i,
-    "Ты предпочитаешь "
-  );
+      .trim();
 
 
-  // Я не люблю чай
-  fact = fact.replace(
-    /^я\s+не\s+люблю\s+/i,
-    "Ты не любишь "
-  );
-
-
-  // Мне нравится чай
-  fact = fact.replace(
-    /^мне\s+нравится\s+/i,
-    "Тебе нравится "
-  );
-
-
-  // Мне не нравится чай
-  fact = fact.replace(
-    /^мне\s+не\s+нравится\s+/i,
-    "Тебе не нравится "
-  );
-
-
-  // Я хочу
-  fact = fact.replace(
-    /^я\s+хочу\s+/i,
-    "Ты хочешь "
-  );
-
-
-  // Я предпочитаю
-  fact = fact.replace(
-    /^я\s+выбираю\s+/i,
-    "Ты выбираешь "
-  );
-
-
-  // Если ничего не преобразовалось
-  if (/^я\s+/i.test(fact)) {
-    fact = fact.replace(
-      /^я\s+/i,
-      "Ты "
+  fact =
+    fact.replace(
+      /^я\s+люблю\s+/i,
+      "Ты любишь "
     );
-  }
+
+
+  fact =
+    fact.replace(
+      /^я\s+предпочитаю\s+/i,
+      "Ты предпочитаешь "
+    );
+
+
+  fact =
+    fact.replace(
+      /^я\s+не\s+люблю\s+/i,
+      "Ты не любишь "
+    );
+
+
+  fact =
+    fact.replace(
+      /^мне\s+нравится\s+/i,
+      "Тебе нравится "
+    );
+
+
+  fact =
+    fact.replace(
+      /^мне\s+не\s+нравится\s+/i,
+      "Тебе не нравится "
+    );
+
+
+  fact =
+    fact.replace(
+      /^я\s+хочу\s+/i,
+      "Ты хочешь "
+    );
+
+
+  fact =
+    fact.replace(
+      /^я\s+выбираю\s+/i,
+      "Ты выбираешь "
+    );
 
 
   return fact;
@@ -935,111 +1511,174 @@ function normalizeFact(text) {
 // MEMORY COMMANDS
 // ============================================================
 
-function isRememberCommand(message) {
+function isRememberCommand(
+  message
+) {
 
   return /^(джарвис[,\s]*)?(запомни|запиши|сохрани|учти)\b/i
-    .test(message.trim());
+    .test(
+      message.trim()
+    );
 }
 
 
-function extractRememberFact(message) {
+function extractRememberFact(
+  message
+) {
 
   return message
+
     .trim()
+
     .replace(
       /^(джарвис[,\s]*)?(запомни|запиши|сохрани|учти)\s*/i,
       ""
     )
+
     .trim();
 }
 
 
-function isRecallCommand(message) {
+function isRecallCommand(
+  message
+) {
 
   return (
+
     /что я люблю/i.test(message) ||
+
     /что ты знаешь обо мне/i.test(message) ||
+
     /что ты обо мне помнишь/i.test(message) ||
+
     /что ты помнишь/i.test(message) ||
+
     /что у тебя в памяти/i.test(message) ||
+
     /покажи память/i.test(message)
+
   );
 }
 
 
-function isForgetCommand(message) {
+function isForgetCommand(
+  message
+) {
 
   return /^(джарвис[,\s]*)?(забудь|удали из памяти)\b/i
-    .test(message.trim());
+    .test(
+      message.trim()
+    );
 }
 
 
-function extractForgetFact(message) {
+function extractForgetFact(
+  message
+) {
 
   return message
+
     .trim()
+
     .replace(
       /^(джарвис[,\s]*)?(забудь|удали из памяти)\s*/i,
       ""
     )
+
     .trim();
 }
 
 
-function isClearPreferencesCommand(message) {
+function isClearPreferencesCommand(
+  message
+) {
 
   return (
+
     /очисти предпочтения/i.test(message) ||
+
     /удали все предпочтения/i.test(message)
+
   );
 }
 
 
-function isClearMemoryCommand(message) {
+function isClearMemoryCommand(
+  message
+) {
 
   return (
+
     /очисти всю память/i.test(message) ||
+
     /забудь всё/i.test(message) ||
+
     /удали всю память/i.test(message)
+
   );
 }
 
 
 // ============================================================
-// ПОИСК
+// SEARCH DECISION
 // ============================================================
 
-function shouldSearch(message) {
+function shouldSearch(
+  message
+) {
 
-  const text = message.toLowerCase();
+  const text =
+    message.toLowerCase();
 
 
   const triggers = [
+
     "сегодня",
+
     "сейчас",
+
     "последние новости",
+
     "новости",
+
     "актуальный",
+
     "актуальная",
+
     "актуальные",
+
     "текущий",
+
     "текущая",
+
     "текущие",
+
     "2026",
+
     "цена",
+
     "стоимость",
+
     "курс",
+
     "погода",
+
     "расписание",
+
     "найди в интернете",
+
     "поищи в интернете",
+
     "найди",
+
     "поищи"
+
   ];
 
 
   return triggers.some(
-    trigger => text.includes(trigger)
+    trigger =>
+      text.includes(trigger)
   );
 }
 
@@ -1058,25 +1697,32 @@ async function searchDuckDuckGo(
     encodeURIComponent(query);
 
 
-  const response = await fetch(
-    searchUrl,
-    {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 JARVIS/1.0"
+  const response =
+    await fetch(
+      searchUrl,
+      {
+
+        headers: {
+
+          "User-Agent":
+            "Mozilla/5.0 JARVIS/1.0"
+
+        }
+
       }
-    }
-  );
+    );
 
 
   if (!response.ok) {
+
     throw new Error(
       `DuckDuckGo HTTP ${response.status}`
     );
   }
 
 
-  const html = await response.text();
+  const html =
+    await response.text();
 
 
   const results = [];
@@ -1089,13 +1735,18 @@ async function searchDuckDuckGo(
 
 
   for (
+
     let i = 1;
+
     i < blocks.length &&
     results.length < limit;
+
     i++
+
   ) {
 
-    const block = blocks[i];
+    const block =
+      blocks[i];
 
 
     const linkMatch =
@@ -1149,9 +1800,13 @@ async function searchDuckDuckGo(
 
 
     results.push({
+
       title,
+
       url,
+
       snippet
+
     });
   }
 
@@ -1164,37 +1819,87 @@ async function searchDuckDuckGo(
 // HTML HELPERS
 // ============================================================
 
-function stripHtml(text) {
+function stripHtml(
+  text
+) {
 
-  return String(text || "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  return String(
+    text || ""
+  )
+
+    .replace(
+      /<[^>]*>/g,
+      ""
+    )
+
+    .replace(
+      /&nbsp;/g,
+      " "
+    )
+
+    .replace(
+      /&amp;/g,
+      "&"
+    )
+
+    .replace(
+      /&quot;/g,
+      '"'
+    )
+
+    .replace(
+      /&#39;/g,
+      "'"
+    )
+
     .trim();
 }
 
 
-function decodeHtml(text) {
+function decodeHtml(
+  text
+) {
 
-  return String(text || "")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+  return String(
+    text || ""
+  )
+
+    .replace(
+      /&amp;/g,
+      "&"
+    )
+
+    .replace(
+      /&quot;/g,
+      '"'
+    )
+
+    .replace(
+      /&#39;/g,
+      "'"
+    )
+
+    .replace(
+      /&lt;/g,
+      "<"
+    )
+
+    .replace(
+      /&gt;/g,
+      ">"
+    )
+
     .trim();
 }
 
 
 // ============================================================
-// HTML ИНТЕРФЕЙС
+// HTML
 // ============================================================
 
 function getHTML() {
 
-  return `<!DOCTYPE html>
+return `<!DOCTYPE html>
 
 <html lang="ru">
 
@@ -1209,7 +1914,7 @@ function getHTML() {
 
 <meta
   name="theme-color"
-  content="#080b12"
+  content="#070a10"
 >
 
 <title>J.A.R.V.I.S.</title>
@@ -1224,10 +1929,15 @@ function getHTML() {
 
 html,
 body {
+
   margin: 0;
+
   padding: 0;
+
   width: 100%;
+
   height: 100%;
+
 }
 
 
@@ -1236,12 +1946,12 @@ body {
   background:
     radial-gradient(
       circle at top,
-      #182235 0%,
-      #0b0f17 45%,
+      #1b263b 0%,
+      #0b1019 45%,
       #05070b 100%
     );
 
-  color: #ffffff;
+  color: white;
 
   font-family:
     -apple-system,
@@ -1256,9 +1966,11 @@ body {
 .app {
 
   width: 100%;
+
   height: 100%;
 
   display: flex;
+
   flex-direction: column;
 }
 
@@ -1268,24 +1980,29 @@ body {
   flex-shrink: 0;
 
   padding:
-    calc(env(safe-area-inset-top) + 18px)
+    calc(
+      env(safe-area-inset-top) + 18px
+    )
     18px
     14px;
 
   text-align: center;
 
-  border-bottom:
-    1px solid rgba(255,255,255,.08);
-
   background:
-    rgba(5,8,14,.75);
+    rgba(5,8,14,.85);
+
+  border-bottom:
+    1px solid
+    rgba(255,255,255,.08);
 }
 
 
 .logo {
 
   font-size: 22px;
+
   font-weight: 700;
+
   letter-spacing: 4px;
 
   color: #dce8ff;
@@ -1298,7 +2015,7 @@ body {
 
   font-size: 12px;
 
-  color: #7f91ad;
+  color: #8090a8;
 }
 
 
@@ -1310,7 +2027,8 @@ body {
 
   padding: 18px;
 
-  -webkit-overflow-scrolling: touch;
+  -webkit-overflow-scrolling:
+    touch;
 }
 
 
@@ -1338,8 +2056,7 @@ body {
 
   margin-left: auto;
 
-  background:
-    #24324a;
+  background: #24334d;
 
   border-bottom-right-radius: 5px;
 }
@@ -1353,7 +2070,8 @@ body {
     rgba(255,255,255,.08);
 
   border:
-    1px solid rgba(255,255,255,.06);
+    1px solid
+    rgba(255,255,255,.06);
 
   border-bottom-left-radius: 5px;
 }
@@ -1367,7 +2085,8 @@ body {
     rgba(130,30,40,.4);
 
   border:
-    1px solid rgba(255,100,110,.2);
+    1px solid
+    rgba(255,100,110,.2);
 }
 
 
@@ -1398,13 +2117,16 @@ body {
   padding:
     10px
     12px
-    calc(env(safe-area-inset-bottom) + 12px);
+    calc(
+      env(safe-area-inset-bottom) + 12px
+    );
 
   background:
-    rgba(5,8,14,.92);
+    rgba(5,8,14,.94);
 
   border-top:
-    1px solid rgba(255,255,255,.08);
+    1px solid
+    rgba(255,255,255,.08);
 }
 
 
@@ -1438,10 +2160,9 @@ textarea {
 
   border-radius: 16px;
 
-  background:
-    #171e2b;
+  background: #171e2b;
 
-  color: #ffffff;
+  color: white;
 
   font-size: 16px;
 
@@ -1458,6 +2179,7 @@ textarea::placeholder {
 button {
 
   width: 46px;
+
   height: 46px;
 
   flex-shrink: 0;
@@ -1466,16 +2188,13 @@ button {
 
   border-radius: 50%;
 
-  background:
-    #dce8ff;
+  background: #dce8ff;
 
   color: #10141c;
 
   font-size: 22px;
 
   font-weight: 700;
-
-  cursor: pointer;
 
   display: flex;
 
@@ -1488,8 +2207,6 @@ button {
 button:disabled {
 
   opacity: .5;
-
-  cursor: default;
 }
 
 
@@ -1497,21 +2214,22 @@ button:disabled {
 
   position: fixed;
 
-  top: 8px;
+  top: 7px;
 
-  right: 8px;
+  right: 7px;
 
   z-index: 100;
 
-  padding: 5px 8px;
+  padding: 4px 7px;
 
   border-radius: 7px;
 
-  font-size: 10px;
+  font-size: 9px;
 
-  color: #8ca2c0;
+  color: #8291aa;
 
-  background: rgba(0,0,0,.35);
+  background:
+    rgba(0,0,0,.35);
 }
 
 </style>
@@ -1525,7 +2243,7 @@ button:disabled {
 <div class="app">
 
 
-  <div class="header">
+  <header class="header">
 
     <div class="logo">
       J.A.R.V.I.S.
@@ -1538,7 +2256,7 @@ button:disabled {
       На связи
     </div>
 
-  </div>
+  </header>
 
 
   <main
@@ -1595,39 +2313,45 @@ button:disabled {
   "use strict";
 
 
-  // ==========================================================
-  // ЭЛЕМЕНТЫ
-  // ==========================================================
-
   const form =
-    document.getElementById("chatForm");
+    document.getElementById(
+      "chatForm"
+    );
+
 
   const input =
-    document.getElementById("input");
+    document.getElementById(
+      "input"
+    );
+
 
   const send =
-    document.getElementById("send");
+    document.getElementById(
+      "send"
+    );
+
 
   const messages =
-    document.getElementById("messages");
+    document.getElementById(
+      "messages"
+    );
+
 
   const status =
-    document.getElementById("status");
+    document.getElementById(
+      "status"
+    );
+
 
   const debug =
-    document.getElementById("debug");
+    document.getElementById(
+      "debug"
+    );
 
 
-  // ==========================================================
-  // ПРОВЕРКА ЗАГРУЗКИ JS
-  // ==========================================================
+  debug.textContent =
+    "READY";
 
-  debug.textContent = "✓ READY";
-
-
-  // ==========================================================
-  // ДОБАВЛЕНИЕ СООБЩЕНИЯ
-  // ==========================================================
 
   function addMessage(
     text,
@@ -1635,13 +2359,17 @@ button:disabled {
     sources
   ) {
 
-    const wrapper =
-      document.createElement("div");
+    const element =
+      document.createElement(
+        "div"
+      );
 
-    wrapper.className =
+
+    element.className =
       "message " + type;
 
-    wrapper.textContent =
+
+    element.textContent =
       text;
 
 
@@ -1651,43 +2379,56 @@ button:disabled {
     ) {
 
       const sourceBox =
-        document.createElement("div");
+        document.createElement(
+          "div"
+        );
+
 
       sourceBox.className =
         "sources";
 
 
-      sources.forEach(function (source) {
+      sources.forEach(
+        function (source) {
 
-        const link =
-          document.createElement("a");
-
-        link.href =
-          source.url;
-
-        link.target =
-          "_blank";
-
-        link.rel =
-          "noopener noreferrer";
-
-        link.textContent =
-          "↗ " + source.title;
+          const link =
+            document.createElement(
+              "a"
+            );
 
 
-        sourceBox.appendChild(link);
+          link.href =
+            source.url;
 
-      });
+
+          link.target =
+            "_blank";
 
 
-      wrapper.appendChild(
+          link.rel =
+            "noopener noreferrer";
+
+
+          link.textContent =
+            "↗ " +
+            source.title;
+
+
+          sourceBox.appendChild(
+            link
+          );
+        }
+      );
+
+
+      element.appendChild(
         sourceBox
       );
     }
 
 
     messages.appendChild(
-      wrapper
+      element
     );
 
 
@@ -1695,10 +2436,6 @@ button:disabled {
       messages.scrollHeight;
   }
 
-
-  // ==========================================================
-  // ОТПРАВКА
-  // ==========================================================
 
   async function sendMessage() {
 
@@ -1711,12 +2448,8 @@ button:disabled {
     }
 
 
-    // Очень важный тест:
-    // если появляется это сообщение,
-    // JavaScript и кнопка работают.
-
     debug.textContent =
-      "✓ CLICK";
+      "CLICK";
 
 
     addMessage(
@@ -1731,11 +2464,9 @@ button:disabled {
       "46px";
 
 
-    send.disabled =
-      true;
+    send.disabled = true;
 
-    input.disabled =
-      true;
+    input.disabled = true;
 
 
     status.textContent =
@@ -1744,36 +2475,36 @@ button:disabled {
 
     try {
 
-      const endpoint =
-        new URL(
-          "/chat",
-          window.location.origin
-        ).toString();
-
-
       debug.textContent =
-        "✓ FETCH";
+        "FETCH";
 
 
       const response =
         await fetch(
-          endpoint,
+          "/chat",
           {
+
             method: "POST",
 
             headers: {
+
               "Content-Type":
                 "application/json",
 
               "Accept":
                 "application/json"
+
             },
 
-            cache: "no-store",
+            cache:
+              "no-store",
 
-            body: JSON.stringify({
-              message: message
-            })
+            body:
+              JSON.stringify({
+                message:
+                  message
+              })
+
           }
         );
 
@@ -1794,9 +2525,7 @@ button:disabled {
 
         throw new Error(
           "Worker вернул не JSON. HTTP " +
-          response.status +
-          ". Ответ: " +
-          raw.slice(0, 300)
+          response.status
         );
       }
 
@@ -1805,7 +2534,7 @@ button:disabled {
 
         throw new Error(
           data.error ||
-          "HTTP ошибка " +
+          "HTTP " +
           response.status
         );
       }
@@ -1822,14 +2551,15 @@ button:disabled {
 
       addMessage(
         data.answer ||
-        "Я получил запрос, но ответ оказался пустым.",
+        "Ответ пуст.",
         "assistant",
         data.sources || []
       );
 
 
       debug.textContent =
-        "✓ OK";
+        "OK";
+
 
       status.textContent =
         "На связи";
@@ -1838,24 +2568,27 @@ button:disabled {
     } catch (error) {
 
       console.error(
-        "JARVIS ERROR:",
         error
       );
 
 
       addMessage(
         "Ошибка: " +
-        (error.message ||
-        "Не удалось отправить сообщение."),
+        (
+          error.message ||
+          "Не удалось выполнить запрос."
+        ),
         "error"
       );
 
 
       debug.textContent =
-        "✕ ERROR";
+        "ERROR";
+
 
       status.textContent =
-        "Ошибка соединения";
+        "Ошибка";
+
 
     } finally {
 
@@ -1870,10 +2603,6 @@ button:disabled {
   }
 
 
-  // ==========================================================
-  // FORM
-  // ==========================================================
-
   form.addEventListener(
     "submit",
     function (event) {
@@ -1885,10 +2614,6 @@ button:disabled {
     }
   );
 
-
-  // ==========================================================
-  // ENTER
-  // ==========================================================
 
   input.addEventListener(
     "keydown",
@@ -1907,16 +2632,13 @@ button:disabled {
   );
 
 
-  // ==========================================================
-  // АВТОВЫСОТА TEXTAREA
-  // ==========================================================
-
   input.addEventListener(
     "input",
     function () {
 
       input.style.height =
         "46px";
+
 
       input.style.height =
         Math.min(
@@ -1925,7 +2647,6 @@ button:disabled {
         ) + "px";
     }
   );
-
 
 })();
 
