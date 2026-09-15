@@ -2,11 +2,18 @@ export default {
   async fetch(request, env) {
     try {
       if (request.method === "GET") {
-        return Response.json({
-          status: "online",
-          assistant: "J.A.R.V.I.S.",
-          message: "Система активна."
-        });
+        return new Response(
+          JSON.stringify({
+            status: "online",
+            assistant: "J.A.R.V.I.S.",
+            message: "Система активна."
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json; charset=UTF-8"
+            }
+          }
+        );
       }
 
       if (request.method !== "POST") {
@@ -44,20 +51,30 @@ export default {
         }
       );
 
-      return Response.json({
-        success: true,
-        assistant: "J.A.R.V.I.S.",
-        response: result.response ?? result
-      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          assistant: "J.A.R.V.I.S.",
+          response: result.response ?? result
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json; charset=UTF-8"
+          }
+        }
+      );
 
     } catch (error) {
-      return Response.json(
-        {
+      return new Response(
+        JSON.stringify({
           success: false,
           error: error.message
-        },
+        }),
         {
-          status: 500
+          status: 500,
+          headers: {
+            "Content-Type": "application/json; charset=UTF-8"
+          }
         }
       );
     }
