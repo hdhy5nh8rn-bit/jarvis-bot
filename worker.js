@@ -6,6 +6,8 @@ const MAX_FACTS = 30;
 const MAX_TASKS = 50;
 const MAX_SEARCH_RESULTS = 5;
 
+const TIME_ZONE = "Europe/Berlin";
+
 /* =========================================================
    J.A.R.V.I.S. — CORE
 ========================================================= */
@@ -62,6 +64,18 @@ const SYSTEM_PROMPT = `
 
 16. Если для выполнения действительно не хватает данных —
     укажи, каких именно данных не хватает.
+
+17. Если пользователь спрашивает о задачах или расписании,
+    используй предоставленный контекст базы данных.
+
+18. Не утверждай, что создал, удалил или изменил задачу,
+    если серверная команда этого не сделала.
+
+19. Дата и время в расписании должны интерпретироваться
+    относительно часового пояса Europe/Berlin.
+
+20. Не называй внутренние значения task_type и repeat_rule,
+    если пользователь специально не спрашивает о технической реализации.
 `;
 
 
@@ -78,6 +92,7 @@ function json(data, status = 200) {
     }
   });
 }
+
 
 function html(content, status = 200) {
   return new Response(content, {
@@ -156,6 +171,7 @@ function extractAIText(result) {
         return cleanAIAnswer(
           choice.message.content
             .map(item => {
+
               if (typeof item === "string") {
                 return item;
               }
@@ -165,6 +181,7 @@ function extractAIText(result) {
                 item?.content ||
                 ""
               );
+
             })
             .join("")
         );
@@ -233,22 +250,23 @@ function extractAIText(result) {
 
 async function askAI(env, messages) {
 
-  const result = await env.AI.run(
-    MODEL,
-    {
-      messages,
+  const result =
+    await env.AI.run(
+      MODEL,
+      {
+        messages,
 
-      max_completion_tokens: 1024,
+        max_completion_tokens: 1024,
 
-      temperature: 0.65,
+        temperature: 0.65,
 
-      reasoning_effort: "low",
+        reasoning_effort: "low",
 
-      chat_template_kwargs: {
-        enable_thinking: false
+        chat_template_kwargs: {
+          enable_thinking: false
+        }
       }
-    }
-  );
+    );
 
   console.log(
     "AI RESULT:",
@@ -277,6 +295,7 @@ async function saveMessage(
   role,
   content
 ) {
+
   await env.DB.prepare(`
     INSERT INTO memory
       (user_id, role, content)
@@ -325,6 +344,10 @@ function normalizeFact(text) {
   let fact =
     String(text)
       .trim()
+      .replace(
+        /^джарвис[,:]?\s*/i,
+        ""
+      )
       .replace(
         /^запомни\s*/i,
         ""
@@ -469,6 +492,10 @@ async function deleteFact(
   const search =
     String(text)
       .replace(
+        /^джарвис[,:]?\s*/i,
+        ""
+      )
+      .replace(
         /^забудь\s*/i,
         ""
       )
@@ -535,6 +562,258 @@ async function clearAllMemory(env) {
 
 
 /* =========================================================
+   DATE HELPERS
+========================================================= */
+
+function localDate() {
+
+  const now =
+    new Date();
+
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone: TIME_ZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }
+    );
+
+  return formatter.format(now);
+}
+
+
+function addDays(
+  dateString,
+  amount
+) {
+
+  const date =
+    new Date(
+      dateString + "T12:00:00"
+    );
+
+  date.setDate(
+    date.getDate() + amount
+  );
+
+  return date
+    .toISOString()
+    .slice(0, 10);
+}
+
+
+function resolveTaskDate(text) {
+
+  const lower =
+    String(text)
+      .toLowerCase();
+
+  const today =
+    localDate();
+
+  if (
+    lower.includes("послезавтра")
+  ) {
+    return addDays(
+      today,
+      2
+    );
+  }
+
+  if (
+    lower.includes("завтра")
+  ) {
+    return addDays(
+      today,
+      1
+    );
+  }
+
+  if (
+    lower.includes("сегодня")
+  ) {
+    return today;
+  }
+
+  const weekdays = {
+    "понедельник": 1,
+    "вторник": 2,
+    "среду": 3,
+    "среда": 3,
+    "четверг": 4,
+    "пятницу": 5,
+    "пятница": 5,
+    "субботу": 6,
+    "суббота": 6,
+    "воскресенье": 0
+  };
+
+  for (
+    const [name, targetDay]
+    of Object.entries(weekdays)
+  ) {
+
+    if (
+      lower.includes(
+        "в " + name
+      ) ||
+      lower.includes(
+        name
+      )
+    ) {
+
+      const current =
+        new Date(
+          today + "T12:00:00"
+        );
+
+      const currentDay =
+        current.getDay();
+
+      let diff =
+        targetDay -
+        currentDay;
+
+      if (diff <= 0) {
+        diff += 7;
+      }
+
+      return addDays(
+        today,
+        diff
+      );
+    }
+  }
+
+  return null;
+}
+
+
+function resolveTaskTime(text) {
+
+  const lower =
+    String(text)
+      .toLowerCase();
+
+  const match =
+    lower.match(
+      /\b(?:в\s*)?([01]?\d|2[0-3])[:.](\d{2})\b/
+    );
+
+  if (match) {
+
+    return (
+      String(match[1])
+        .padStart(2, "0") +
+      ":" +
+      match[2]
+    );
+  }
+
+  const hourMatch =
+    lower.match(
+      /\bв\s+([0-9]{1,2})\s*(час(?:а|ов)?|утра|дня|вечера|ночи)\b/
+    );
+
+  if (hourMatch) {
+
+    let hour =
+      Number(
+        hourMatch[1]
+      );
+
+    const period =
+      hourMatch[2];
+
+    if (
+      period.includes("вечер") &&
+      hour < 12
+    ) {
+      hour += 12;
+    }
+
+    if (
+      period.includes("дня") &&
+      hour < 12
+    ) {
+      hour += 12;
+    }
+
+    if (
+      period.includes("ноч") &&
+      hour === 12
+    ) {
+      hour = 0;
+    }
+
+    return (
+      String(hour)
+        .padStart(2, "0") +
+      ":00"
+    );
+  }
+
+  return null;
+}
+
+
+function getTodayWeekday() {
+
+  const date =
+    new Date(
+      localDate() +
+      "T12:00:00"
+    );
+
+  return date.getDay();
+}
+
+
+function formatDateRu(
+  dateString
+) {
+
+  const date =
+    new Date(
+      dateString +
+      "T12:00:00"
+    );
+
+  return new Intl.DateTimeFormat(
+    "ru-RU",
+    {
+      weekday: "long",
+      day: "numeric",
+      month: "long"
+    }
+  ).format(date);
+}
+
+
+function formatShortDate(
+  dateString
+) {
+
+  const date =
+    new Date(
+      dateString +
+      "T12:00:00"
+    );
+
+  return new Intl.DateTimeFormat(
+    "ru-RU",
+    {
+      day: "2-digit",
+      month: "2-digit"
+    }
+  ).format(date);
+}
+
+
+/* =========================================================
    TASKS
 ========================================================= */
 
@@ -542,20 +821,32 @@ async function createTask(
   env,
   title,
   taskDate = null,
-  taskTime = null
+  taskTime = null,
+  taskType = "task",
+  repeatRule = null
 ) {
 
   const result =
     await env.DB.prepare(`
       INSERT INTO tasks
-        (user_id, title, task_date, task_time)
-      VALUES (?, ?, ?, ?)
+        (
+          user_id,
+          title,
+          task_date,
+          task_time,
+          status,
+          task_type,
+          repeat_rule
+        )
+      VALUES (?, ?, ?, ?, 'active', ?, ?)
     `)
       .bind(
         USER_ID,
         title,
         taskDate,
-        taskTime
+        taskTime,
+        taskType,
+        repeatRule
       )
       .run();
 
@@ -565,16 +856,61 @@ async function createTask(
 
 async function getTasks(
   env,
-  taskDate = null
+  taskDate = null,
+  taskType = null
 ) {
 
   let result;
 
-  if (taskDate) {
+  if (
+    taskDate &&
+    taskType
+  ) {
 
     result =
       await env.DB.prepare(`
-        SELECT id, title, task_date, task_time, status
+        SELECT
+          id,
+          title,
+          task_date,
+          task_time,
+          task_type,
+          repeat_rule,
+          status
+        FROM tasks
+        WHERE user_id = ?
+        AND task_date = ?
+        AND task_type = ?
+        AND status = 'active'
+        ORDER BY
+          CASE
+            WHEN task_time IS NULL THEN 1
+            ELSE 0
+          END,
+          task_time,
+          id
+        LIMIT ?
+      `)
+        .bind(
+          USER_ID,
+          taskDate,
+          taskType,
+          MAX_TASKS
+        )
+        .all();
+
+  } else if (taskDate) {
+
+    result =
+      await env.DB.prepare(`
+        SELECT
+          id,
+          title,
+          task_date,
+          task_time,
+          task_type,
+          repeat_rule,
+          status
         FROM tasks
         WHERE user_id = ?
         AND task_date = ?
@@ -595,11 +931,51 @@ async function getTasks(
         )
         .all();
 
+  } else if (taskType) {
+
+    result =
+      await env.DB.prepare(`
+        SELECT
+          id,
+          title,
+          task_date,
+          task_time,
+          task_type,
+          repeat_rule,
+          status
+        FROM tasks
+        WHERE user_id = ?
+        AND task_type = ?
+        AND status = 'active'
+        ORDER BY
+          CASE
+            WHEN task_date IS NULL THEN 1
+            ELSE 0
+          END,
+          task_date,
+          task_time,
+          id
+        LIMIT ?
+      `)
+        .bind(
+          USER_ID,
+          taskType,
+          MAX_TASKS
+        )
+        .all();
+
   } else {
 
     result =
       await env.DB.prepare(`
-        SELECT id, title, task_date, task_time, status
+        SELECT
+          id,
+          title,
+          task_date,
+          task_time,
+          task_type,
+          repeat_rule,
+          status
         FROM tasks
         WHERE user_id = ?
         AND status = 'active'
@@ -674,170 +1050,151 @@ async function completeTask(
 
 
 /* =========================================================
-   DATE HELPERS
-========================================================= */
-
-function localDate() {
-
-  const now =
-    new Date();
-
-  const formatter =
-    new Intl.DateTimeFormat(
-      "en-CA",
-      {
-        timeZone: "Europe/Berlin",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit"
-      }
-    );
-
-  return formatter.format(now);
-}
-
-
-function addDays(
-  dateString,
-  amount
-) {
-
-  const date =
-    new Date(
-      dateString + "T12:00:00"
-    );
-
-  date.setDate(
-    date.getDate() + amount
-  );
-
-  return date
-    .toISOString()
-    .slice(0, 10);
-}
-
-
-function resolveTaskDate(text) {
-
-  const lower =
-    text.toLowerCase();
-
-  const today =
-    localDate();
-
-  if (
-    lower.includes("сегодня")
-  ) {
-    return today;
-  }
-
-  if (
-    lower.includes("завтра")
-  ) {
-    return addDays(
-      today,
-      1
-    );
-  }
-
-  if (
-    lower.includes("послезавтра")
-  ) {
-    return addDays(
-      today,
-      2
-    );
-  }
-
-  return null;
-}
-
-
-function resolveTaskTime(text) {
-
-  const match =
-    text.match(
-      /\b([01]?\d|2[0-3])[:.](\d{2})\b/
-    );
-
-  if (!match) {
-    return null;
-  }
-
-  return (
-    String(match[1]).padStart(2, "0") +
-    ":" +
-    match[2]
-  );
-}
-
-
-/* =========================================================
    COMMAND DETECTION
 ========================================================= */
 
 function isSaveMemoryCommand(text) {
-  return /^(запомни|запиши|сохрани|учти)\b/i
+
+  return /^(джарвис[,:]?\s*)?(запомни|запиши|сохрани|учти)\b/i
     .test(text.trim());
 }
 
 
 function isRecallCommand(text) {
-  return /^(что я люблю|что ты знаешь обо мне|что ты помнишь|покажи память|покажи что ты помнишь|какая у тебя память)/i
+
+  return /^(джарвис[,:]?\s*)?(что я люблю|что ты знаешь обо мне|что ты помнишь|покажи память|покажи что ты помнишь|какая у тебя память)/i
     .test(text.trim());
 }
 
 
 function isDeleteFactCommand(text) {
-  return /^(забудь|удали из памяти)\b/i
+
+  return /^(джарвис[,:]?\s*)?(забудь|удали из памяти)\b/i
     .test(text.trim());
 }
 
 
 function isClearFactsCommand(text) {
-  return /^(очисти предпочтения|удали все предпочтения)/i
+
+  return /^(джарвис[,:]?\s*)?(очисти предпочтения|удали все предпочтения)/i
     .test(text.trim());
 }
 
 
 function isClearAllCommand(text) {
-  return /^(очисти всю память|забудь всё|забудь все|удали всю память)/i
+
+  return /^(джарвис[,:]?\s*)?(очисти всю память|забудь всё|забудь все|удали всю память)/i
     .test(text.trim());
 }
 
 
 function isCreateTaskCommand(text) {
 
+  const clean =
+    text
+      .trim()
+      .replace(
+        /^джарвис[,:]?\s*/i,
+        ""
+      );
+
+  const lower =
+    clean.toLowerCase();
+
   return (
     /^(создай|добавь|поставь|запиши)\s+(задачу|дело|напоминание)/i
-      .test(text.trim()) ||
-    /\bнапомни мне\b/i.test(text)
+      .test(clean) ||
+
+    /^напомни мне\b/i
+      .test(clean) ||
+
+    /^(сегодня|завтра|послезавтра)\b/i
+      .test(clean) ||
+
+    /^в\s+(понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)\b/i
+      .test(clean) ||
+
+    (
+      /\b(в|на)\s+(сегодня|завтра|послезавтра)\b/i
+        .test(lower) &&
+      /\b(в|на)\s+\d{1,2}([:.]\d{2})?/i
+        .test(lower)
+    )
   );
 }
 
 
 function isListTasksCommand(text) {
 
+  const clean =
+    text
+      .trim()
+      .replace(
+        /^джарвис[,:]?\s*/i,
+        ""
+      );
+
   return (
-    /^(какие у меня задачи|покажи задачи|мои задачи|список задач|что у меня запланировано)/i
-      .test(text.trim()) ||
-    /^что у меня (сегодня|завтра|послезавтра)/i
-      .test(text.trim())
+    /^(какие у меня задачи|покажи задачи|мои задачи|список задач)/i
+      .test(clean) ||
+
+    /^что у меня\s+(сегодня|завтра|послезавтра)/i
+      .test(clean)
   );
 }
 
 
 function isDeleteTaskCommand(text) {
 
-  return /^(удали|убери)\s+(задачу|дело|напоминание)/i
+  return /^(джарвис[,:]?\s*)?(удали|убери)\s+(задачу|дело|напоминание)/i
     .test(text.trim());
 }
 
 
 function isCompleteTaskCommand(text) {
 
-  return /^(выполнил|выполнено|заверши|закрой)\s+(задачу|дело)/i
+  return /^(джарвис[,:]?\s*)?(выполнил|выполнено|заверши|закрой)\s+(задачу|дело)/i
     .test(text.trim());
+}
+
+
+function isWeekScheduleCommand(text) {
+
+  const clean =
+    text
+      .trim()
+      .replace(
+        /^джарвис[,:]?\s*/i,
+        ""
+      );
+
+  return (
+    /^(покажи|покажи мне|выведи|покажи моё|покажи мое)?\s*(расписание|план)\s*(на\s*)?(эту\s*)?неделю/i
+      .test(clean)
+  );
+}
+
+
+function isScheduleDayCommand(text) {
+
+  const clean =
+    text
+      .trim()
+      .replace(
+        /^джарвис[,:]?\s*/i,
+        ""
+      );
+
+  return (
+    /^что у меня\s+(сегодня|завтра|послезавтра)/i
+      .test(clean) ||
+
+    /^расписание\s+(на\s+)?(сегодня|завтра|послезавтра)/i
+      .test(clean) ||
+
+    /^план\s+(на\s+)?(сегодня|завтра|послезавтра)/i
+      .test(clean)
+  );
 }
 
 
@@ -848,7 +1205,7 @@ function isCompleteTaskCommand(text) {
 function extractTaskTitle(text) {
 
   let title =
-    text
+    String(text)
       .replace(
         /^джарвис[,:]?\s*/i,
         ""
@@ -861,9 +1218,77 @@ function extractTaskTitle(text) {
         /^напомни мне\s*:?\s*/i,
         ""
       )
+      .replace(
+        /^(сегодня|завтра|послезавтра)\s*/i,
+        ""
+      )
+      .replace(
+        /^в\s+(понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)\s*/i,
+        ""
+      )
       .trim();
 
-  return title;
+  title =
+    title.replace(
+      /\bв\s+([01]?\d|2[0-3])[:.](\d{2})\b/gi,
+      ""
+    );
+
+  title =
+    title.replace(
+      /\b([01]?\d|2[0-3])[:.](\d{2})\b/gi,
+      ""
+    );
+
+  title =
+    title.replace(
+      /\bв\s+([0-9]{1,2})\s*(час(?:а|ов)?|утра|дня|вечера|ночи)\b/gi,
+      ""
+    );
+
+  title =
+    title.replace(
+      /\s{2,}/g,
+      " "
+    );
+
+  return title.trim();
+}
+
+
+/* =========================================================
+   SCHEDULE TITLE CLEANER
+========================================================= */
+
+function cleanScheduleTitle(text) {
+
+  let title =
+    extractTaskTitle(text);
+
+  title =
+    title.replace(
+      /^(на\s+)?(сегодня|завтра|послезавтра)\s*/i,
+      ""
+    );
+
+  title =
+    title.replace(
+      /^на\s+(понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)\s*/i,
+      ""
+    );
+
+  title =
+    title.replace(
+      /^в\s+(понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье)\s*/i,
+      ""
+    );
+
+  return title
+    .replace(
+      /\s{2,}/g,
+      " "
+    )
+    .trim();
 }
 
 
@@ -884,7 +1309,6 @@ function shouldSearch(text) {
     "стоимость",
     "курс",
     "погода",
-    "расписание",
     "найди",
     "найти",
     "поищи",
@@ -1106,10 +1530,15 @@ async function buildTaskContext(env) {
   }
 
   return `
-АКТИВНЫЕ ЗАДАЧИ ЕГОРА:
+АКТИВНЫЕ ЗАДАЧИ И СОБЫТИЯ ЕГОРА:
 
 ${tasks
   .map(task => {
+
+    const type =
+      task.task_type === "schedule"
+        ? "расписание"
+        : "задача";
 
     const date =
       task.task_date
@@ -1122,7 +1551,7 @@ ${tasks
         : "";
 
     return (
-      `ID ${task.id}: ${task.title}` +
+      `ID ${task.id}: [${type}] ${task.title}` +
       date +
       time
     );
@@ -1133,6 +1562,91 @@ ${tasks
 Не изменяй задачи самостоятельно.
 Изменение задач выполняется сервером.
 `;
+}
+
+
+/* =========================================================
+   SCHEDULE — WEEK
+========================================================= */
+
+async function buildWeekSchedule(
+  env
+) {
+
+  const today =
+    localDate();
+
+  const lines = [];
+
+  for (
+    let i = 0;
+    i < 7;
+    i++
+  ) {
+
+    const date =
+      addDays(
+        today,
+        i
+      );
+
+    const events =
+      await getTasks(
+        env,
+        date,
+        "schedule"
+      );
+
+    const heading =
+      formatDateRu(
+        date
+      );
+
+    lines.push(
+      `📅 ${heading}`
+    );
+
+    if (!events.length) {
+
+      lines.push(
+        "— свободно"
+      );
+
+    } else {
+
+      for (
+        const event
+        of events
+      ) {
+
+        let line =
+          "• ";
+
+        if (
+          event.task_time
+        ) {
+
+          line +=
+            event.task_time +
+            " — ";
+        }
+
+        line +=
+          event.title;
+
+        lines.push(
+          line
+        );
+      }
+    }
+
+    lines.push("");
+  }
+
+  return (
+    "Твоё расписание на ближайшие 7 дней:\n\n" +
+    lines.join("\n")
+  );
 }
 
 
@@ -1192,12 +1706,14 @@ async function handleChat(
     )
   ) {
 
-    await clearAllMemory(env);
+    await clearAllMemory(
+      env
+    );
 
     return json({
       ok: true,
       answer:
-        "Готово. Я очистил всю сохранённую память, задачи и предпочтения."
+        "Готово. Я очистил всю сохранённую память, задачи и расписание."
     });
   }
 
@@ -1246,7 +1762,9 @@ async function handleChat(
   ) {
 
     const facts =
-      await getFacts(env);
+      await getFacts(
+        env
+      );
 
     if (!facts.length) {
 
@@ -1298,7 +1816,9 @@ async function handleChat(
     )
   ) {
 
-    await clearFacts(env);
+    await clearFacts(
+      env
+    );
 
     return json({
       ok: true,
@@ -1309,7 +1829,93 @@ async function handleChat(
 
 
   /* =======================================================
-     TASK — CREATE
+     WEEK SCHEDULE
+  ======================================================= */
+
+  if (
+    isWeekScheduleCommand(
+      userMessage
+    )
+  ) {
+
+    const answer =
+      await buildWeekSchedule(
+        env
+      );
+
+    return json({
+      ok: true,
+      answer
+    });
+  }
+
+
+  /* =======================================================
+     DAY SCHEDULE
+  ======================================================= */
+
+  if (
+    isScheduleDayCommand(
+      userMessage
+    )
+  ) {
+
+    const taskDate =
+      resolveTaskDate(
+        userMessage
+      );
+
+    const events =
+      await getTasks(
+        env,
+        taskDate,
+        "schedule"
+      );
+
+    if (!events.length) {
+
+      return json({
+        ok: true,
+        answer:
+          taskDate
+            ? `На ${formatDateRu(taskDate)} расписание свободно.`
+            : "В расписании пока ничего нет."
+      });
+    }
+
+    const lines =
+      events
+        .map(event => {
+
+          let line =
+            "• ";
+
+          if (
+            event.task_time
+          ) {
+
+            line +=
+              event.task_time +
+              " — ";
+          }
+
+          line +=
+            event.title;
+
+          return line;
+        })
+        .join("\n");
+
+    return json({
+      ok: true,
+      answer:
+        `Расписание на ${formatDateRu(taskDate)}:\n\n${lines}`
+    });
+  }
+
+
+  /* =======================================================
+     CREATE TASK / SCHEDULE
   ======================================================= */
 
   if (
@@ -1317,20 +1923,6 @@ async function handleChat(
       userMessage
     )
   ) {
-
-    const title =
-      extractTaskTitle(
-        userMessage
-      );
-
-    if (!title) {
-
-      return json({
-        ok: true,
-        answer:
-          "Что именно нужно добавить в задачи?"
-      });
-    }
 
     const taskDate =
       resolveTaskDate(
@@ -1342,30 +1934,68 @@ async function handleChat(
         userMessage
       );
 
+    const title =
+      cleanScheduleTitle(
+        userMessage
+      );
+
+    if (!title) {
+
+      return json({
+        ok: true,
+        answer:
+          "Что именно нужно записать?"
+      });
+    }
+
+    const isSchedule =
+      Boolean(
+        taskDate ||
+        taskTime
+      );
+
+    const taskType =
+      isSchedule
+        ? "schedule"
+        : "task";
+
     const id =
       await createTask(
         env,
         title,
         taskDate,
-        taskTime
+        taskTime,
+        taskType,
+        null
       );
 
     let answer =
-      `Добавил задачу: ${title}`;
+      isSchedule
+        ? `Записал в расписание: ${title}`
+        : `Добавил задачу: ${title}`;
 
-    if (taskDate) {
+    if (
+      taskDate
+    ) {
+
       answer +=
-        `\nДата: ${taskDate}`;
+        `\nДата: ${formatDateRu(taskDate)}`;
     }
 
-    if (taskTime) {
+    if (
+      taskTime
+    ) {
+
       answer +=
         `\nВремя: ${taskTime}`;
     }
 
-    if (id) {
+    if (
+      id
+    ) {
+
       answer +=
-        `\nID задачи: ${id}`;
+        `\nID: ${id}`;
     }
 
     return json({
@@ -1376,7 +2006,7 @@ async function handleChat(
 
 
   /* =======================================================
-     TASK — LIST
+     TASK LIST
   ======================================================= */
 
   if (
@@ -1393,7 +2023,10 @@ async function handleChat(
     const tasks =
       await getTasks(
         env,
+        taskDate,
         taskDate
+          ? null
+          : "task"
       );
 
     if (!tasks.length) {
@@ -1402,7 +2035,7 @@ async function handleChat(
         ok: true,
         answer:
           taskDate
-            ? `На ${taskDate} активных задач нет.`
+            ? `На ${formatDateRu(taskDate)} задач нет.`
             : "Активных задач сейчас нет."
       });
     }
@@ -1414,12 +2047,18 @@ async function handleChat(
           let line =
             `• ${task.title}`;
 
-          if (task.task_date) {
+          if (
+            task.task_date
+          ) {
+
             line +=
-              ` — ${task.task_date}`;
+              ` — ${formatShortDate(task.task_date)}`;
           }
 
-          if (task.task_time) {
+          if (
+            task.task_time
+          ) {
+
             line +=
               ` в ${task.task_time}`;
           }
@@ -1432,14 +2071,14 @@ async function handleChat(
       ok: true,
       answer:
         taskDate
-          ? `Задачи на ${taskDate}:\n\n${answer}`
+          ? `Задачи на ${formatDateRu(taskDate)}:\n\n${answer}`
           : `Твои активные задачи:\n\n${answer}`
     });
   }
 
 
   /* =======================================================
-     TASK — DELETE
+     TASK DELETE
   ======================================================= */
 
   if (
@@ -1451,11 +2090,11 @@ async function handleChat(
     let search =
       userMessage
         .replace(
-          /^удали\s+(задачу|дело|напоминание)\s*/i,
+          /^джарвис[,:]?\s*/i,
           ""
         )
         .replace(
-          /^убери\s+(задачу|дело|напоминание)\s*/i,
+          /^(удали|убери)\s+(задачу|дело|напоминание)\s*/i,
           ""
         )
         .replace(
@@ -1482,14 +2121,14 @@ async function handleChat(
     return json({
       ok: true,
       answer: deleted
-        ? "Готово. Задача удалена."
-        : "Я не нашёл такую активную задачу."
+        ? "Готово. Задача или событие удалено."
+        : "Я не нашёл такую активную задачу или событие."
     });
   }
 
 
   /* =======================================================
-     TASK — COMPLETE
+     TASK COMPLETE
   ======================================================= */
 
   if (
@@ -1500,6 +2139,10 @@ async function handleChat(
 
     let search =
       userMessage
+        .replace(
+          /^джарвис[,:]?\s*/i,
+          ""
+        )
         .replace(
           /^(выполнил|выполнено|заверши|закрой)\s+(задачу|дело)\s*/i,
           ""
@@ -1542,15 +2185,21 @@ async function handleChat(
 
 
   const history =
-    await getHistory(env);
+    await getHistory(
+      env
+    );
 
 
   const memoryContext =
-    await buildMemoryContext(env);
+    await buildMemoryContext(
+      env
+    );
 
 
   const taskContext =
-    await buildTaskContext(env);
+    await buildTaskContext(
+      env
+    );
 
 
   /* =======================================================
